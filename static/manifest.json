@@ -1,0 +1,14 @@
+{
+  "name": "Ledger",
+  "short_name": "Ledger",
+  "display": "standalone",
+  "background_color": "#0d0d0b",
+  "theme_color": "#7DD3FC",
+  "icons": [
+    {
+      "src": "/static/assets/iconsquare.png",
+      "sizes": "any",
+      "type": "image/png"
+    }
+  ]
+}
