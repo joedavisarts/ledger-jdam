@@ -4,8 +4,7 @@
   "description": "Joe Davis Arts & Media — Document Generator",
   "main": "electron/main.js",
   "scripts": {
-    "start": "gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120",
-    "build": "echo 'skipping desktop build'"
+    "electron": "electron ."
   },
   "devDependencies": {
     "electron": "^30.0.0",
