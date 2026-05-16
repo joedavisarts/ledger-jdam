@@ -30,6 +30,24 @@ function updateToggleIcon(theme) {
   toggle.title = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
 }
 
+// ── Sidebar toggle (mobile) ───────────────────────────────────────────────────
+const sidebarToggleBtn = document.getElementById('sidebar-toggle');
+const sidebarEl = document.getElementById('sidebar');
+const sidebarBackdropEl = document.getElementById('sidebar-backdrop');
+
+if (sidebarToggleBtn && sidebarEl) {
+  sidebarToggleBtn.addEventListener('click', () => {
+    sidebarEl.classList.toggle('mobile-expanded');
+    if (sidebarBackdropEl) sidebarBackdropEl.classList.toggle('active');
+  });
+  if (sidebarBackdropEl) {
+    sidebarBackdropEl.addEventListener('click', () => {
+      sidebarEl.classList.remove('mobile-expanded');
+      sidebarBackdropEl.classList.remove('active');
+    });
+  }
+}
+
 // ── Clickable table rows ──────────────────────────────────────────────────────
 document.querySelectorAll('tr.clickable[data-href]').forEach(row => {
   row.addEventListener('click', e => {
