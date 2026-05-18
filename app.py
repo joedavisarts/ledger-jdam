@@ -28,7 +28,7 @@ AUTH_PASSWORD = os.environ.get('AUTH_PASSWORD', 'jdam2026')
 
 @app.before_request
 def require_login():
-    if request.endpoint in ('login', 'logout', 'static'):
+    if request.endpoint in ('login', 'logout', 'static', 'oauth2callback'):
         return
     if not session.get('logged_in'):
         return redirect(url_for('login'))
@@ -124,36 +124,75 @@ def _upsert_item_library(db, description, unit_price, currency):
 # Gmail
 # ---------------------------------------------------------------------------
 
+GMAIL_SCOPES = ['https://www.googleapis.com/auth/gmail.send']
+
+
+def _load_google_client_config():
+    import json
+    from database import DATA_DIR
+    raw = os.environ.get('GOOGLE_CREDENTIALS')
+    if raw:
+        return json.loads(raw)
+    creds_path = os.path.join(DATA_DIR, 'credentials.json')
+    if os.path.exists(creds_path):
+        with open(creds_path) as f:
+            return json.load(f)
+    raise RuntimeError('Google credentials not found. Set GOOGLE_CREDENTIALS env var or add credentials.json.')
+
+
 def _get_gmail_service():
     try:
         from google.oauth2.credentials import Credentials
-        from google_auth_oauthlib.flow import InstalledAppFlow
         from google.auth.transport.requests import Request
         from googleapiclient.discovery import build
     except ImportError:
         raise RuntimeError('Google API packages not installed. Run: pip install google-auth-oauthlib google-auth-httplib2 google-api-python-client')
 
     from database import DATA_DIR
-    scopes = ['https://www.googleapis.com/auth/gmail.send']
     token_path = os.path.join(DATA_DIR, 'token.json')
-    creds_path = os.path.join(DATA_DIR, 'credentials.json')
 
     creds = None
     if os.path.exists(token_path):
-        creds = Credentials.from_authorized_user_file(token_path, scopes)
+        creds = Credentials.from_authorized_user_file(token_path, GMAIL_SCOPES)
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
+            with open(token_path, 'w') as f:
+                f.write(creds.to_json())
         else:
-            if not os.path.exists(creds_path):
-                raise RuntimeError('credentials.json not found. Please add your Google OAuth credentials.')
-            flow = InstalledAppFlow.from_client_secrets_file(creds_path, scopes)
-            creds = flow.run_local_server(port=0)
-        with open(token_path, 'w') as f:
-            f.write(creds.to_json())
+            raise RuntimeError('Gmail not authorized. Visit /auth/google to connect your account.')
 
     return build('gmail', 'v1', credentials=creds)
+
+
+@app.route('/auth/google')
+def auth_google():
+    from google_auth_oauthlib.flow import Flow
+    redirect_uri = os.environ.get('OAUTH_REDIRECT_URI', url_for('oauth2callback', _external=True))
+    flow = Flow.from_client_config(_load_google_client_config(), scopes=GMAIL_SCOPES, redirect_uri=redirect_uri)
+    auth_url, state = flow.authorization_url(access_type='offline', prompt='consent')
+    session['oauth_state'] = state
+    return redirect(auth_url)
+
+
+@app.route('/oauth2callback')
+def oauth2callback():
+    from google_auth_oauthlib.flow import Flow
+    from database import DATA_DIR
+    redirect_uri = os.environ.get('OAUTH_REDIRECT_URI', url_for('oauth2callback', _external=True))
+    flow = Flow.from_client_config(
+        _load_google_client_config(),
+        scopes=GMAIL_SCOPES,
+        redirect_uri=redirect_uri,
+        state=session['oauth_state'],
+    )
+    flow.fetch_token(authorization_response=request.url)
+    token_path = os.path.join(DATA_DIR, 'token.json')
+    with open(token_path, 'w') as f:
+        f.write(flow.credentials.to_json())
+    flash('Gmail connected successfully.', 'success')
+    return redirect(url_for('dashboard'))
 
 
 def _email_body_text(first_name, doc_number, doc_type):
