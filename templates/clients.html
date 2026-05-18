@@ -3,12 +3,17 @@
 {% block content %}
 <div class="page-header">
   <h1>Clients</h1>
+  <div class="header-actions">
+    <button id="bulk-delete-btn" class="btn btn-danger hidden" type="button" onclick="bulkDelete()">Delete Selected</button>
+  </div>
 </div>
 
 {% if clients %}
+<form id="bulk-form" method="POST" action="{{ url_for('bulk_delete_clients') }}">
 <table class="data-table">
   <thead>
     <tr>
+      <th style="width:36px;"><input type="checkbox" id="select-all" title="Select all" style="accent-color:var(--gold);cursor:pointer;"></th>
       <th>Name</th>
       <th>Email</th>
       <th>Phone</th>
@@ -20,17 +25,52 @@
   <tbody>
     {% for c in clients %}
     <tr class="clickable" data-href="{{ url_for('client_detail', client_id=c.id) }}">
+      <td onclick="event.stopPropagation()"><input type="checkbox" name="client_ids" value="{{ c.id }}" class="client-checkbox" style="accent-color:var(--gold);cursor:pointer;"></td>
       <td class="strong">{{ c.name }}</td>
       <td>{{ c.email or '—' }}</td>
       <td>{{ c.phone or '—' }}</td>
       <td>{{ c.city or '—' }}</td>
       <td>{{ c.doc_count }}</td>
-      <td><a href="{{ url_for('client_detail', client_id=c.id) }}" class="btn btn-xs btn-outline">View</a></td>
+      <td><a href="{{ url_for('client_detail', client_id=c.id) }}" class="btn btn-xs btn-outline" onclick="event.stopPropagation()">View</a></td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+</form>
 {% else %}
 <p class="empty-state">No clients yet. Create one when you make your first document.</p>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const selectAll = document.getElementById('select-all');
+const bulkBtn = document.getElementById('bulk-delete-btn');
+const checkboxes = () => document.querySelectorAll('.client-checkbox');
+
+function updateBulkBtn() {
+  const anyChecked = [...checkboxes()].some(c => c.checked);
+  bulkBtn.classList.toggle('hidden', !anyChecked);
+  if (selectAll) selectAll.indeterminate = anyChecked && [...checkboxes()].some(c => !c.checked);
+}
+
+if (selectAll) {
+  selectAll.addEventListener('change', () => {
+    checkboxes().forEach(c => c.checked = selectAll.checked);
+    updateBulkBtn();
+  });
+}
+
+checkboxes().forEach(c => c.addEventListener('change', () => {
+  if (selectAll) selectAll.checked = [...checkboxes()].every(c => c.checked);
+  updateBulkBtn();
+}));
+
+function bulkDelete() {
+  const count = [...checkboxes()].filter(c => c.checked).length;
+  if (confirm(`Delete ${count} client${count !== 1 ? 's' : ''}? This cannot be undone.`)) {
+    document.getElementById('bulk-form').submit();
+  }
+}
+</script>
 {% endblock %}

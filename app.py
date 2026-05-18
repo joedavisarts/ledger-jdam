@@ -288,7 +288,7 @@ def build_html_email(first_name, doc_number, doc_type, logo_path=None):
           <tr>
             <td style="vertical-align:middle;width:60px;">{logo_html}</td>
             <td style="vertical-align:middle;text-align:right;padding-left:16px;">
-              <div style="font-family:'Nunito Sans','Avenir',Arial,sans-serif;color:#77600B;font-size:11px;text-transform:uppercase;letter-spacing:0.12em;font-weight:600;line-height:1.4;">JOE DAVIS ARTS &amp; MEDIA</div>
+              <img src="https://joedavisarts.com/assets/images/LogoType_Gold.png" alt="Joe Davis Arts &amp; Media" height="28" style="display:block; border:0; outline:none; margin-left:auto;" />
             </td>
           </tr>
         </table>
@@ -652,6 +652,19 @@ def delete_template(client_id, tmpl_id):
     db.commit()
     db.close()
     return redirect(url_for('client_detail', client_id=client_id))
+
+
+@app.route('/clients/bulk_delete', methods=['POST'])
+def bulk_delete_clients():
+    client_ids = request.form.getlist('client_ids')
+    if client_ids:
+        ph = ','.join('?' * len(client_ids))
+        db = get_db()
+        db.execute(f"UPDATE documents SET client_id=NULL WHERE client_id IN ({ph})", client_ids)
+        db.execute(f"DELETE FROM clients WHERE id IN ({ph})", client_ids)
+        db.commit()
+        db.close()
+    return redirect(url_for('clients'))
 
 
 @app.route('/clients/<int:client_id>/export')
