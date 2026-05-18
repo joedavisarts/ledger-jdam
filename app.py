@@ -173,6 +173,7 @@ def auth_google():
     flow = Flow.from_client_config(_load_google_client_config(), scopes=GMAIL_SCOPES, redirect_uri=redirect_uri)
     auth_url, state = flow.authorization_url(access_type='offline', prompt='consent')
     session['oauth_state'] = state
+    session['oauth_code_verifier'] = flow.code_verifier
     return redirect(auth_url)
 
 
@@ -187,6 +188,7 @@ def oauth2callback():
         redirect_uri=redirect_uri,
         state=session['oauth_state'],
     )
+    flow.code_verifier = session.get('oauth_code_verifier')
     flow.fetch_token(authorization_response=request.url)
     token_path = os.path.join(DATA_DIR, 'token.json')
     with open(token_path, 'w') as f:
