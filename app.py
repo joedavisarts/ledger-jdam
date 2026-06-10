@@ -569,16 +569,23 @@ def _default_email_templates():
 
 
 def _resolve_placeholders(text, doc, client, user):
-    first_name = (client.get('name') or '').split()[0] if client.get('name') else 'there'
+    display_name = client.get('company_name') or client.get('name') or 'Client'
+    currency = doc.get('currency', 'USD')
+    if doc.get('doc_type') == 'receipt':
+        raw_amount = doc.get('paid_amount') or 0
+    else:
+        raw_amount = doc.get('amount_due') or 0
+    amount_str = f"{currency} {raw_amount:,.2f}"
+    due_date = doc.get('pay_by_date') or ''
     replacements = {
         '{{###DOCNUMBER###}}':    doc.get('doc_number', ''),
-        '{{###CLIENTNAME###}}':   first_name,
-        '{{###DOCTYPE###}}':      doc.get('doc_type', ''),
+        '{{###CLIENTNAME###}}':   display_name,
+        '{{###AMOUNT###}}':       amount_str,
+        '{{###DUEDATE###}}':      due_date,
         '{{###BUSINESSNAME###}}': user.get('business_name', ''),
-        '{{###DATE###}}':         doc.get('date_issued', ''),
     }
     for token, value in replacements.items():
-        text = text.replace(token, value)
+        text = text.replace(token, str(value))
     return text
 
 
