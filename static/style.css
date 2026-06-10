@@ -41,7 +41,7 @@ a:hover { text-decoration: underline; }
 .sidebar {
   width: 220px;
   flex-shrink: 0;
-  background: linear-gradient(180deg, #0a0d1a 0%, #0E0E0E 100%);
+  background: linear-gradient(180deg, #1a0d2e 0%, #0E0E0E 100%);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
