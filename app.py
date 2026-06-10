@@ -730,6 +730,52 @@ def clients():
     return render_template('clients.html', clients=rows)
 
 
+@app.route('/clients/import', methods=['POST'])
+def import_clients():
+    csv_content = request.form.get('csv_content', '').strip()
+    if not csv_content:
+        return jsonify({'error': 'No CSV content received'}), 400
+    try:
+        mapping = json.loads(request.form.get('mapping', '{}'))
+    except (ValueError, TypeError):
+        return jsonify({'error': 'Invalid mapping JSON'}), 400
+
+    quilk_fields = ['company_name', 'name', 'email', 'phone',
+                    'address_line1', 'address_line2', 'city', 'country', 'notes']
+
+    reader = csv.DictReader(io.StringIO(csv_content))
+    imported = 0
+    skipped = 0
+    db = get_db()
+    try:
+        for row in reader:
+            if not any((v or '').strip() for v in row.values()):
+                continue
+            record = {}
+            for field in quilk_fields:
+                col = mapping.get(field, '')
+                record[field] = (row.get(col) or '').strip() or None
+            if not record['company_name'] and not record['name']:
+                skipped += 1
+                continue
+            db.execute(
+                "INSERT INTO clients (company_name,name,email,phone,address_line1,"
+                "address_line2,city,country,notes,user_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (record['company_name'], record['name'] or '',
+                 record['email'], record['phone'],
+                 record['address_line1'], record['address_line2'],
+                 record['city'], record['country'], record['notes'],
+                 current_user.id),
+            )
+            imported += 1
+        db.commit()
+    except Exception as exc:
+        db.close()
+        return jsonify({'error': str(exc)}), 500
+    db.close()
+    return jsonify({'imported': imported, 'skipped': skipped})
+
+
 @app.route('/clients/<int:client_id>')
 def client_detail(client_id):
     db = get_db()

@@ -5,6 +5,7 @@
   <h1>Clients</h1>
   <div class="header-actions">
     <button id="bulk-delete-btn" class="btn btn-danger hidden" type="button" onclick="bulkDelete()">Delete Selected</button>
+    <button type="button" class="btn btn-outline" onclick="openImportModal()">Import CSV</button>
     <button type="button" class="btn btn-gold" onclick="openAddClient()">Add Client</button>
   </div>
 </div>
@@ -100,6 +101,51 @@
     </form>
   </div>
 </div>
+<!-- Import CSV Modal -->
+<div class="modal-overlay hidden" id="import-csv-modal" role="dialog" aria-modal="true" aria-label="Import Clients from CSV">
+  <div class="modal-card" style="max-width:680px;padding:0;">
+    <div class="modal-header">
+      <h3 id="import-modal-title">Import Clients from CSV</h3>
+      <button type="button" class="modal-close" onclick="closeImportModal()" aria-label="Close">&times;</button>
+    </div>
+
+    <!-- Step 1: file pick -->
+    <div id="import-step-1" style="padding:24px 28px 20px;">
+      <p style="margin-bottom:16px;color:#888;font-size:13.5px;">Upload a CSV file. You'll map columns to client fields on the next screen.</p>
+      <div class="field">
+        <label>CSV File</label>
+        <input type="file" id="import-file-input" accept=".csv,text/csv" style="padding:6px 0;" />
+      </div>
+      <div class="form-actions" style="margin-top:12px;">
+        <button type="button" class="btn btn-outline" onclick="closeImportModal()">Cancel</button>
+        <button type="button" class="btn btn-gold" id="import-next-btn" onclick="parseImportCSV()" disabled>Next: Map Columns →</button>
+      </div>
+    </div>
+
+    <!-- Step 2: mapping + preview -->
+    <div id="import-step-2" class="hidden" style="padding:24px 28px 20px;">
+      <p style="margin-bottom:16px;color:#888;font-size:13.5px;">Match your CSV columns to Quilk fields. At least <strong>Company Name</strong> or <strong>Contact Name</strong> must be mapped.</p>
+      <div id="import-mapping-grid"></div>
+      <h4 style="margin:20px 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#888;">Preview — first 5 rows</h4>
+      <div style="overflow-x:auto;max-height:180px;overflow-y:auto;">
+        <table id="import-preview-table" class="data-table" style="font-size:12px;"></table>
+      </div>
+      <p id="import-map-error" style="color:#e05;font-size:12px;margin-top:8px;display:none;">Map at least Company Name or Contact Name to continue.</p>
+      <div class="form-actions" style="margin-top:16px;">
+        <button type="button" class="btn btn-outline" onclick="showImportStep(1)">← Back</button>
+        <button type="button" class="btn btn-gold" id="import-run-btn" onclick="runImport()">Import Clients</button>
+      </div>
+    </div>
+
+    <!-- Step 3: result -->
+    <div id="import-step-3" class="hidden" style="padding:24px 28px 20px;">
+      <div id="import-result-content"></div>
+      <div class="form-actions" style="margin-top:16px;">
+        <button type="button" class="btn btn-gold" onclick="closeImportModal(); window.location.reload();">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -158,5 +204,220 @@ document.getElementById('add-client-form').addEventListener('submit', function(e
     document.getElementById('ac-company').focus();
   }
 });
+
+// ---------------------------------------------------------------------------
+// CSV Import
+// ---------------------------------------------------------------------------
+
+const IMPORT_FIELDS = [
+  { key: 'company_name', label: 'Company Name' },
+  { key: 'name',         label: 'Contact Name' },
+  { key: 'email',        label: 'Email' },
+  { key: 'phone',        label: 'Phone' },
+  { key: 'address_line1',label: 'Address Line 1' },
+  { key: 'address_line2',label: 'Address Line 2' },
+  { key: 'city',         label: 'City' },
+  { key: 'country',      label: 'Country' },
+  { key: 'notes',        label: 'Notes' },
+];
+
+let _importCSVText = '';
+let _importHeaders = [];
+let _importRows = [];
+
+function openImportModal() {
+  document.getElementById('import-csv-modal').classList.remove('hidden');
+  showImportStep(1);
+}
+
+function closeImportModal() {
+  document.getElementById('import-csv-modal').classList.add('hidden');
+  document.getElementById('import-file-input').value = '';
+  _importCSVText = '';
+  _importHeaders = [];
+  _importRows = [];
+}
+
+document.getElementById('import-csv-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeImportModal();
+});
+
+document.getElementById('import-file-input').addEventListener('change', function() {
+  document.getElementById('import-next-btn').disabled = !this.files.length;
+});
+
+function showImportStep(n) {
+  [1,2,3].forEach(i =>
+    document.getElementById('import-step-' + i).classList.toggle('hidden', i !== n)
+  );
+  document.getElementById('import-modal-title').textContent =
+    n === 1 ? 'Import Clients from CSV' :
+    n === 2 ? 'Map Columns' : 'Import Complete';
+}
+
+function _parseCSV(text) {
+  const rows = [];
+  let i = 0, n = text.length;
+  while (i < n) {
+    const row = [];
+    while (i < n) {
+      let field = '';
+      if (text[i] === '"') {
+        i++;
+        while (i < n) {
+          if (text[i] === '"') {
+            if (i + 1 < n && text[i+1] === '"') { field += '"'; i += 2; }
+            else { i++; break; }
+          } else { field += text[i++]; }
+        }
+      } else {
+        while (i < n && text[i] !== ',' && text[i] !== '\n' && text[i] !== '\r') field += text[i++];
+        field = field.trim();
+      }
+      row.push(field);
+      if (i < n && text[i] === ',') { i++; }
+      else { if (i < n && text[i] === '\r') i++; if (i < n && text[i] === '\n') i++; break; }
+    }
+    if (row.some(f => f !== '')) rows.push(row);
+  }
+  return rows;
+}
+
+function _normalizeKey(s) {
+  return s.toLowerCase().replace(/[\s_\-\.]+/g, '');
+}
+
+function _autoMatch(headers) {
+  const aliases = {
+    company_name:  ['company','companyname','organisation','organization','business','businessname'],
+    name:          ['name','contactname','fullname','contact','client','person'],
+    email:         ['email','emailaddress','mail'],
+    phone:         ['phone','phonenumber','telephone','mobile','cell'],
+    address_line1: ['address1','addressline1','address','street','streetaddress'],
+    address_line2: ['address2','addressline2','suite','apt','unit'],
+    city:          ['city','town'],
+    country:       ['country','countrycode','nation'],
+    notes:         ['notes','note','comments','comment','memo'],
+  };
+  const map = {};
+  headers.forEach(h => {
+    const norm = _normalizeKey(h);
+    for (const [field, keys] of Object.entries(aliases)) {
+      if (!map[field] && keys.includes(norm)) map[field] = h;
+    }
+  });
+  return map;
+}
+
+function parseImportCSV() {
+  const file = document.getElementById('import-file-input').files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    _importCSVText = e.target.result;
+    const all = _parseCSV(_importCSVText);
+    if (!all.length) { alert('CSV appears to be empty.'); return; }
+    _importHeaders = all[0];
+    _importRows = all.slice(1);
+    _buildMappingUI();
+    showImportStep(2);
+  };
+  reader.readAsText(file);
+}
+
+function _buildMappingUI() {
+  const autoMap = _autoMatch(_importHeaders);
+  const grid = document.getElementById('import-mapping-grid');
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;';
+  IMPORT_FIELDS.forEach(f => {
+    const div = document.createElement('div');
+    div.className = 'field';
+    div.style.marginBottom = '0';
+    const label = document.createElement('label');
+    label.style.fontSize = '12px';
+    label.textContent = f.label;
+    const sel = document.createElement('select');
+    sel.id = 'map-' + f.key;
+    sel.style.fontSize = '13px';
+    const none = document.createElement('option');
+    none.value = ''; none.textContent = '— skip / none —';
+    sel.appendChild(none);
+    _importHeaders.forEach(h => {
+      const opt = document.createElement('option');
+      opt.value = h; opt.textContent = h;
+      if (autoMap[f.key] === h) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener('change', _updatePreview);
+    div.append(label, sel);
+    wrap.appendChild(div);
+  });
+  grid.innerHTML = '';
+  grid.appendChild(wrap);
+  _updatePreview();
+}
+
+function _getMapping() {
+  const m = {};
+  IMPORT_FIELDS.forEach(f => {
+    const sel = document.getElementById('map-' + f.key);
+    m[f.key] = sel ? sel.value : '';
+  });
+  return m;
+}
+
+function _updatePreview() {
+  const mapping = _getMapping();
+  const table = document.getElementById('import-preview-table');
+  const active = IMPORT_FIELDS.filter(f => mapping[f.key]);
+  if (!active.length) { table.innerHTML = ''; return; }
+  let html = '<thead><tr>' + active.map(f => '<th>' + f.label + '</th>').join('') + '</tr></thead><tbody>';
+  _importRows.slice(0, 5).forEach(row => {
+    html += '<tr>' + active.map(f => {
+      const idx = _importHeaders.indexOf(mapping[f.key]);
+      return '<td>' + (idx >= 0 ? (row[idx] || '') : '') + '</td>';
+    }).join('') + '</tr>';
+  });
+  html += '</tbody>';
+  table.innerHTML = html;
+}
+
+function runImport() {
+  const mapping = _getMapping();
+  const errEl = document.getElementById('import-map-error');
+  if (!mapping.company_name && !mapping.name) {
+    errEl.style.display = 'block'; return;
+  }
+  errEl.style.display = 'none';
+  const btn = document.getElementById('import-run-btn');
+  btn.disabled = true; btn.textContent = 'Importing…';
+  const body = new FormData();
+  body.append('csv_content', _importCSVText);
+  body.append('mapping', JSON.stringify(mapping));
+  fetch('/clients/import', { method: 'POST', body })
+    .then(r => r.json())
+    .then(data => {
+      let html = '';
+      if (data.error) {
+        html = '<p style="color:#e05;">Error: ' + data.error + '</p>';
+      } else {
+        html = '<p style="font-size:22px;margin-bottom:12px;"><strong>' + data.imported +
+               '</strong> client' + (data.imported !== 1 ? 's' : '') + ' imported.</p>';
+        if (data.skipped) {
+          html += '<p style="color:#888;">' + data.skipped + ' row' +
+                  (data.skipped !== 1 ? 's' : '') +
+                  ' skipped — no company name or contact name.</p>';
+        }
+      }
+      document.getElementById('import-result-content').innerHTML = html;
+      btn.disabled = false; btn.textContent = 'Import Clients';
+      showImportStep(3);
+    })
+    .catch(() => {
+      btn.disabled = false; btn.textContent = 'Import Clients';
+      alert('Import failed. Please try again.');
+    });
+}
 </script>
 {% endblock %}
