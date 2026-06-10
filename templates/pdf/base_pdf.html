@@ -39,7 +39,7 @@
     width: auto;
   }
   .logo-wordmark {
-    color: #77600B;
+    color: {{ user.accent_color_dark }};
     font-size: 10px;
     font-weight: 600;
     letter-spacing: 0.08em;
@@ -49,7 +49,7 @@
   .logo-placeholder {
     font-size: 13pt;
     font-weight: 700;
-    color: #DAB322;
+    color: {{ user.accent_color }};
     letter-spacing: 1px;
   }
   .header-right {
@@ -69,13 +69,13 @@
     font-weight: 600;
     letter-spacing: 1.5px;
     text-transform: uppercase;
-    color: #77600B;
+    color: {{ user.accent_color_dark }};
   }
 
-  /* Gold rule */
+  /* Accent rule */
   .gold-rule {
     border: none;
-    border-top: 2pt solid #DAB322;
+    border-top: 2pt solid {{ user.accent_color }};
     margin: 10pt 0 16pt;
   }
 
@@ -89,7 +89,7 @@
     font-size: 7.5pt;
     text-transform: uppercase;
     letter-spacing: 1.5px;
-    color: #77600B;
+    color: {{ user.accent_color_dark }};
     margin-bottom: 4pt;
     font-weight: 600;
   }
@@ -113,7 +113,7 @@
   }
   .items-table thead tr {
     background: #0E0E0E;
-    color: #DAB322;
+    color: {{ user.accent_color }};
   }
   .items-table thead th {
     padding: 6pt 8pt;
@@ -157,7 +157,7 @@
   .totals-inner .t-row.t-due {
     margin-top: 4pt;
     border-bottom: none;
-    border-top: 1.5pt solid #DAB322;
+    border-top: 1.5pt solid {{ user.accent_color }};
     padding-top: 6pt;
     font-size: 12pt;
     font-weight: 700;
@@ -169,10 +169,10 @@
     margin-bottom: 16pt;
     padding: 8pt 12pt;
     background: #FFFCF5;
-    border-left: 3pt solid #DAB322;
+    border-left: 3pt solid {{ user.accent_color }};
     font-size: 9.5pt;
   }
-  .pay-by strong { color: #77600B; }
+  .pay-by strong { color: {{ user.accent_color_dark }}; }
   .pay-by .pay-by-date { color: #0E0E0E; font-weight: 700; }
 
   /* Payment methods */
@@ -184,7 +184,7 @@
     font-size: 18pt;
     text-transform: uppercase;
     letter-spacing: 1.5px;
-    color: #77600B;
+    color: {{ user.accent_color_dark }};
     font-weight: 700;
     margin-bottom: 12pt;
     padding-bottom: 6pt;
@@ -195,12 +195,12 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 1.5px;
-    color: #77600B;
+    color: {{ user.accent_color_dark }};
     margin-bottom: 3pt;
   }
   .payment-group-rule {
     border: none;
-    border-top: 0.75pt solid #77600B;
+    border-top: 0.75pt solid {{ user.accent_color_dark }};
     margin-bottom: 8pt;
   }
   .payment-grid {
@@ -233,7 +233,7 @@
   }
   .doc-footer .thank-you {
     font-weight: 600;
-    color: #77600B;
+    color: {{ user.accent_color_dark }};
     font-size: 8.5pt;
   }
   .quote-valid {

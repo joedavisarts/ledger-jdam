@@ -1,5 +1,5 @@
 {
-  "name": "ledger-jdam",
+  "name": "quilk",
   "version": "1.0.0",
   "description": "Joe Davis Arts & Media — Document Generator",
   "main": "electron/main.js",
@@ -12,8 +12,9 @@
     "electron-builder": "^24.0.0"
   },
   "build": {
-    "appId": "com.joedavisarts.ledger",
+    "appId": "com.joedavisarts.quilk",
     "productName": "Quilk",
+    "artifactName": "Quilk-${version}-${arch}.${ext}",
     "mac": {
       "category": "public.app-category.business",
       "icon": "static/assets/icon.icns"

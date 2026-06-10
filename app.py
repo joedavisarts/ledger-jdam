@@ -12,6 +12,9 @@ from email import encoders
 
 from flask import (Flask, render_template, request, redirect,
                    url_for, jsonify, send_file, abort, flash, session)
+from flask_login import (LoginManager, UserMixin, login_required,
+                         current_user, login_user, logout_user)
+from werkzeug.security import check_password_hash
 
 from database import get_db, init_db, next_doc_number
 from pdf_generator import generate_pdf
@@ -19,28 +22,65 @@ from pdf_generator import generate_pdf
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'jdam-ledger-secret-2026')
 
-# ---------------------------------------------------------------------------
-# Auth config — override with AUTH_USERNAME / AUTH_PASSWORD env vars
-# ---------------------------------------------------------------------------
-AUTH_USERNAME = os.environ.get('AUTH_USERNAME', 'joe')
-AUTH_PASSWORD = os.environ.get('AUTH_PASSWORD', 'jdam2026')
+login_manager = LoginManager(app)
+login_manager.login_view = 'login'
 
+ASSETS_DIR = os.path.join(os.path.dirname(__file__), 'static', 'assets')
+
+
+# ---------------------------------------------------------------------------
+# User model
+# ---------------------------------------------------------------------------
+
+class User(UserMixin):
+    def __init__(self, row):
+        self._data = dict(row)
+        for k, v in self._data.items():
+            setattr(self, k, v)
+
+    def get_id(self):
+        return str(self.id)
+
+    def to_dict(self):
+        return dict(self._data)
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    db = get_db()
+    row = db.execute("SELECT * FROM users WHERE id=?", (int(user_id),)).fetchone()
+    db.close()
+    return User(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
 
 @app.before_request
 def require_login():
-    if request.endpoint in ('login', 'logout', 'static', 'oauth2callback'):
+    public = {'login', 'static', 'oauth2callback'}
+    if request.endpoint in public:
         return
-    if not session.get('logged_in'):
+    if not current_user.is_authenticated:
         return redirect(url_for('login'))
 
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('dashboard'))
     error = None
     if request.method == 'POST':
-        if (request.form.get('username') == AUTH_USERNAME and
-                request.form.get('password') == AUTH_PASSWORD):
-            session['logged_in'] = True
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        db = get_db()
+        row = db.execute(
+            "SELECT * FROM users WHERE username=?", (username,)
+        ).fetchone()
+        db.close()
+        if row and check_password_hash(row['password_hash'], password):
+            login_user(User(row))
             return redirect(url_for('dashboard'))
         error = 'Invalid username or password.'
     return render_template('login.html', error=error)
@@ -48,7 +88,7 @@ def login():
 
 @app.route('/logout', methods=['POST'])
 def logout():
-    session.clear()
+    logout_user()
     return redirect(url_for('login'))
 
 
@@ -58,9 +98,6 @@ def format_currency_filter(value):
         return '{:,.2f}'.format(float(value))
     except (ValueError, TypeError):
         return '0.00'
-
-ASSETS_DIR = os.path.join(os.path.dirname(__file__), 'static', 'assets')
-LOGO_PATH = os.path.join(ASSETS_DIR, 'logo.png')
 
 
 # ---------------------------------------------------------------------------
@@ -105,18 +142,17 @@ def _compute_totals(line_items, discount_val, discount_type,
     return subtotal, discount, tax_amount, amount_due
 
 
-def _upsert_item_library(db, description, unit_price, currency):
-    """Save or update an item in the item library by description."""
+def _upsert_item_library(db, description, unit_price, currency, user_id):
     if not description or not description.strip():
         return
     desc = description.strip()
     db.execute(
-        """INSERT INTO item_library (name, description, default_price, currency)
-           VALUES (?, ?, ?, ?)
-           ON CONFLICT(description) DO UPDATE SET
+        """INSERT INTO item_library (name, description, default_price, currency, user_id)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(description, user_id) DO UPDATE SET
              default_price=excluded.default_price,
              currency=excluded.currency""",
-        (desc, desc, unit_price, currency)
+        (desc, desc, unit_price, currency, user_id),
     )
 
 
@@ -128,7 +164,6 @@ GMAIL_SCOPES = ['https://www.googleapis.com/auth/gmail.send']
 
 
 def _load_google_client_config():
-    import json
     from database import DATA_DIR
     raw = os.environ.get('GOOGLE_CREDENTIALS')
     if raw:
@@ -137,7 +172,9 @@ def _load_google_client_config():
     if os.path.exists(creds_path):
         with open(creds_path) as f:
             return json.load(f)
-    raise RuntimeError('Google credentials not found. Set GOOGLE_CREDENTIALS env var or add credentials.json.')
+    raise RuntimeError(
+        'Google credentials not found. Set GOOGLE_CREDENTIALS env var or add credentials.json.'
+    )
 
 
 def _get_gmail_service():
@@ -146,22 +183,34 @@ def _get_gmail_service():
         from google.auth.transport.requests import Request
         from googleapiclient.discovery import build
     except ImportError:
-        raise RuntimeError('Google API packages not installed. Run: pip install google-auth-oauthlib google-auth-httplib2 google-api-python-client')
+        raise RuntimeError(
+            'Google API packages not installed. '
+            'Run: pip install google-auth-oauthlib google-auth-httplib2 google-api-python-client'
+        )
 
-    from database import DATA_DIR
-    token_path = os.path.join(DATA_DIR, 'token.json')
+    token_json = current_user.gmail_token
+    if not token_json:
+        raise RuntimeError(
+            'Gmail not authorised. Visit /auth/google to connect your account.'
+        )
 
-    creds = None
-    if os.path.exists(token_path):
-        creds = Credentials.from_authorized_user_file(token_path, GMAIL_SCOPES)
+    creds = Credentials.from_authorized_user_info(json.loads(token_json), GMAIL_SCOPES)
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            with open(token_path, 'w') as f:
-                f.write(creds.to_json())
+            refreshed = creds.to_json()
+            db = get_db()
+            db.execute(
+                "UPDATE users SET gmail_token=? WHERE id=?",
+                (refreshed, current_user.id),
+            )
+            db.commit()
+            db.close()
         else:
-            raise RuntimeError('Gmail not authorized. Visit /auth/google to connect your account.')
+            raise RuntimeError(
+                'Gmail not authorised. Visit /auth/google to connect your account.'
+            )
 
     return build('gmail', 'v1', credentials=creds)
 
@@ -169,8 +218,12 @@ def _get_gmail_service():
 @app.route('/auth/google')
 def auth_google():
     from google_auth_oauthlib.flow import Flow
-    redirect_uri = os.environ.get('OAUTH_REDIRECT_URI', url_for('oauth2callback', _external=True))
-    flow = Flow.from_client_config(_load_google_client_config(), scopes=GMAIL_SCOPES, redirect_uri=redirect_uri)
+    redirect_uri = os.environ.get(
+        'OAUTH_REDIRECT_URI', url_for('oauth2callback', _external=True)
+    )
+    flow = Flow.from_client_config(
+        _load_google_client_config(), scopes=GMAIL_SCOPES, redirect_uri=redirect_uri
+    )
     auth_url, state = flow.authorization_url(access_type='offline', prompt='consent')
     session['oauth_state'] = state
     session['oauth_code_verifier'] = flow.code_verifier
@@ -179,9 +232,14 @@ def auth_google():
 
 @app.route('/oauth2callback')
 def oauth2callback():
+    if not current_user.is_authenticated:
+        flash('Please log in before connecting Gmail.', 'error')
+        return redirect(url_for('login'))
+
     from google_auth_oauthlib.flow import Flow
-    from database import DATA_DIR
-    redirect_uri = os.environ.get('OAUTH_REDIRECT_URI', url_for('oauth2callback', _external=True))
+    redirect_uri = os.environ.get(
+        'OAUTH_REDIRECT_URI', url_for('oauth2callback', _external=True)
+    )
     flow = Flow.from_client_config(
         _load_google_client_config(),
         scopes=GMAIL_SCOPES,
@@ -190,88 +248,140 @@ def oauth2callback():
     )
     flow.code_verifier = session.get('oauth_code_verifier')
     flow.fetch_token(authorization_response=request.url)
-    token_path = os.path.join(DATA_DIR, 'token.json')
-    with open(token_path, 'w') as f:
-        f.write(flow.credentials.to_json())
+
+    db = get_db()
+    db.execute(
+        "UPDATE users SET gmail_token=? WHERE id=?",
+        (flow.credentials.to_json(), current_user.id),
+    )
+    db.commit()
+    db.close()
+
     flash('Gmail connected successfully.', 'success')
     return redirect(url_for('dashboard'))
 
 
-def _email_body_text(first_name, doc_number, doc_type):
-    sign_off = (
-        "\n\nWarmest Regards,\n"
-        "Joe Davis\n"
-        "Musical Director & Multi-Instrumentalist\n\n"
-        "Joe Davis Arts & Media\n"
-        "www.joedavisarts.com"
-    )
+# ---------------------------------------------------------------------------
+# Email building
+# ---------------------------------------------------------------------------
+
+def _email_body_text(first_name, doc_number, doc_type, user):
+    sign_off = '\n\nWarmest Regards,\n' + user['display_name']
+    if user.get('title'):
+        sign_off += '\n' + user['title']
+    sign_off += '\n\n' + user['business_name']
+    if user.get('business_website'):
+        sign_off += '\n' + user['business_website']
+
     bodies = {
         'invoice': (
-            f"Good day,\n\n"
-            f"Please find your invoice attached, document number {doc_number}, for your records.\n\n"
-            f"Kindly confirm receipt of this email, and please reply directly with any questions."
-            f"{sign_off}"
+            f'Good day,\n\n'
+            f'Please find your invoice attached, document number {doc_number}, for your records.\n\n'
+            f'Kindly confirm receipt of this email, and please reply directly with any questions.'
+            f'{sign_off}'
         ),
         'quote': (
-            f"Good day,\n\n"
-            f"Please find your quote attached, document number {doc_number}, for your records. "
-            f"This quote is valid for two weeks from the date of issue.\n\n"
-            f"Kindly confirm receipt of this email, and please reply directly with any questions."
-            f"{sign_off}"
+            f'Good day,\n\n'
+            f'Please find your quote attached, document number {doc_number}, for your records. '
+            f'This quote is valid for two weeks from the date of issue.\n\n'
+            f'Kindly confirm receipt of this email, and please reply directly with any questions.'
+            f'{sign_off}'
         ),
         'receipt': (
-            f"Good day,\n\n"
-            f"Please find your receipt attached, document number {doc_number}, for your records.\n\n"
-            f"It has been a pleasure. Kindly confirm receipt of this email, and feel free to reply directly with any questions."
-            f"{sign_off}"
+            f'Good day,\n\n'
+            f'Please find your receipt attached, document number {doc_number}, for your records.\n\n'
+            f'It has been a pleasure. Kindly confirm receipt of this email, and feel free to reply directly with any questions.'
+            f'{sign_off}'
         ),
     }
     return bodies[doc_type]
 
 
-def build_html_email(first_name, doc_number, doc_type, logo_path=None):
-    """Build HTML + plain-text email body. Returns (html_str, plain_str)."""
-    plain = _email_body_text(first_name, doc_number, doc_type)
+def build_html_email(first_name, doc_number, doc_type, logo_path, user):
+    plain = _email_body_text(first_name, doc_number, doc_type, user)
+
+    biz = user['business_name']
+    accent = user['accent_color']
+    accent_dark = user['accent_color_dark']
 
     preheaders = {
-        'invoice': f'Please find your invoice from Joe Davis Arts &amp; Media attached.',
-        'quote': f'Please find your quote from Joe Davis Arts &amp; Media attached.',
-        'receipt': f'Please find your receipt from Joe Davis Arts &amp; Media attached.',
+        'invoice': f'Please find your invoice from {biz} attached.',
+        'quote':   f'Please find your quote from {biz} attached.',
+        'receipt': f'Please find your receipt from {biz} attached.',
     }
 
     body_paras = {
         'invoice': (
-            f"<p style=\"font-family:'Nunito Sans','Avenir',Arial,sans-serif;font-size:16px;color:#0E0E0E;line-height:26px;margin:0 0 16px 0;\">"
-            f"Please find your invoice attached, document number <strong>{doc_number}</strong>, for your records.</p>"
-            f"<p style=\"font-family:'Nunito Sans','Avenir',Arial,sans-serif;font-size:16px;color:#0E0E0E;line-height:26px;margin:0;\">"
-            "Kindly confirm receipt of this email, and please reply directly with any questions.</p>"
+            f'<p style="font-family:\'Nunito Sans\',\'Avenir\',Arial,sans-serif;font-size:16px;color:#0E0E0E;line-height:26px;margin:0 0 16px 0;">'
+            f'Please find your invoice attached, document number <strong>{doc_number}</strong>, for your records.</p>'
+            f'<p style="font-family:\'Nunito Sans\',\'Avenir\',Arial,sans-serif;font-size:16px;color:#0E0E0E;line-height:26px;margin:0;">'
+            'Kindly confirm receipt of this email, and please reply directly with any questions.</p>'
         ),
         'quote': (
-            f"<p style=\"font-family:'Nunito Sans','Avenir',Arial,sans-serif;font-size:16px;color:#0E0E0E;line-height:26px;margin:0 0 16px 0;\">"
-            f"Please find your quote attached, document number <strong>{doc_number}</strong>, for your records. "
-            "This quote is valid for two weeks from the date of issue.</p>"
-            f"<p style=\"font-family:'Nunito Sans','Avenir',Arial,sans-serif;font-size:16px;color:#0E0E0E;line-height:26px;margin:0;\">"
-            "Kindly confirm receipt of this email, and please reply directly with any questions.</p>"
+            f'<p style="font-family:\'Nunito Sans\',\'Avenir\',Arial,sans-serif;font-size:16px;color:#0E0E0E;line-height:26px;margin:0 0 16px 0;">'
+            f'Please find your quote attached, document number <strong>{doc_number}</strong>, for your records. '
+            'This quote is valid for two weeks from the date of issue.</p>'
+            f'<p style="font-family:\'Nunito Sans\',\'Avenir\',Arial,sans-serif;font-size:16px;color:#0E0E0E;line-height:26px;margin:0;">'
+            'Kindly confirm receipt of this email, and please reply directly with any questions.</p>'
         ),
         'receipt': (
-            f"<p style=\"font-family:'Nunito Sans','Avenir',Arial,sans-serif;font-size:16px;color:#0E0E0E;line-height:26px;margin:0 0 16px 0;\">"
-            f"Please find your receipt attached, document number <strong>{doc_number}</strong>, for your records.</p>"
-            f"<p style=\"font-family:'Nunito Sans','Avenir',Arial,sans-serif;font-size:16px;color:#0E0E0E;line-height:26px;margin:0;\">"
-            "It has been a pleasure. Kindly confirm receipt of this email, and feel free to reply directly with any questions.</p>"
+            f'<p style="font-family:\'Nunito Sans\',\'Avenir\',Arial,sans-serif;font-size:16px;color:#0E0E0E;line-height:26px;margin:0 0 16px 0;">'
+            f'Please find your receipt attached, document number <strong>{doc_number}</strong>, for your records.</p>'
+            f'<p style="font-family:\'Nunito Sans\',\'Avenir\',Arial,sans-serif;font-size:16px;color:#0E0E0E;line-height:26px;margin:0;">'
+            'It has been a pleasure. Kindly confirm receipt of this email, and feel free to reply directly with any questions.</p>'
         ),
     }
 
     if logo_path and os.path.exists(logo_path):
-        logo_html = '<img src="cid:logo" width="48" height="48" alt="Joe Davis Arts &amp; Media" style="display:block;" />'
+        logo_html = f'<img src="cid:logo" width="48" height="48" alt="{biz}" style="display:block;" />'
     else:
-        logo_html = '<div style="font-family:\'Nunito Sans\',\'Avenir\',Arial,sans-serif;color:#DAB322;font-size:14px;font-weight:bold;letter-spacing:0.1em;">JOE DAVIS ARTS &amp; MEDIA</div>'
+        logo_html = (
+            f'<div style="font-family:\'Nunito Sans\',\'Avenir\',Arial,sans-serif;'
+            f'color:{accent};font-size:14px;font-weight:bold;letter-spacing:0.1em;">'
+            f'{biz.upper()}</div>'
+        )
+
+    # Social links
+    social_links = json.loads(user.get('social_links_json') or '[]')
+    if social_links:
+        sep = '<span style="color:#333333;">&nbsp;&middot;&nbsp;</span>'
+        parts = [
+            f'<a href="{l["url"]}" style="color:#888888;text-decoration:none;">{l["label"]}</a>'
+            for l in social_links
+        ]
+        social_html = (
+            f'<p style="font-family:\'Nunito Sans\',\'Avenir\',Arial,sans-serif;'
+            f'font-size:11px;color:#888888;text-align:center;margin:0 0 14px 0;">'
+            + sep.join(parts) + '</p>'
+        )
+    else:
+        social_html = ''
+
+    website = user.get('business_website', '')
+    website_html = ''
+    if website:
+        href = website if website.startswith('http') else f'https://{website}'
+        website_html = (
+            f'<p style="font-family:\'Nunito Sans\',\'Avenir\',Arial,sans-serif;'
+            f'font-size:12px;text-align:center;margin:0 0 12px 0;">'
+            f'<a href="{href}" style="color:{accent};text-decoration:none;letter-spacing:0.06em;">'
+            f'{website}</a></p>'
+        )
+
+    title_line = ''
+    if user.get('title'):
+        title_line = (
+            f'<p style="font-family:\'Nunito Sans\',\'Avenir\',Arial,sans-serif;'
+            f'font-size:13px;color:{accent_dark};font-weight:600;letter-spacing:0.04em;margin:0;">'
+            f'{user["title"]}</p>'
+        )
 
     html = f"""<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en">
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Joe Davis Arts &amp; Media</title>
+<title>{biz}</title>
 <link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@300;400;600&amp;display=swap" rel="stylesheet" type="text/css" />
 <!--[if mso]><style type="text/css">body,table,td{{font-family:Arial,sans-serif !important;}}</style><![endif]-->
 </head>
@@ -281,14 +391,14 @@ def build_html_email(first_name, doc_number, doc_type, logo_path=None):
   <tr><td align="center" style="padding:24px 12px;">
     <table border="0" cellpadding="0" cellspacing="0" width="600" style="max-width:600px;background-color:#ffffff;border-radius:4px;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
       <!-- Top bar -->
-      <tr><td height="4" style="background-color:#DAB322;font-size:0;line-height:0;">&nbsp;</td></tr>
+      <tr><td height="4" style="background-color:{accent};font-size:0;line-height:0;">&nbsp;</td></tr>
       <!-- Header -->
       <tr><td style="padding:32px 40px 0 40px;">
         <table border="0" cellpadding="0" cellspacing="0" width="100%">
           <tr>
             <td style="vertical-align:middle;width:60px;">{logo_html}</td>
             <td style="vertical-align:middle;text-align:right;padding-left:16px;">
-              <img src="https://joedavisarts.com/assets/images/LogoType_Gold.png" alt="Joe Davis Arts &amp; Media" height="28" style="display:block; border:0; outline:none; margin-left:auto;" />
+              <span style="font-family:'Nunito Sans','Avenir',Arial,sans-serif;font-size:13px;font-weight:700;color:#0E0E0E;letter-spacing:0.05em;">{biz.upper()}</span>
             </td>
           </tr>
         </table>
@@ -301,8 +411,8 @@ def build_html_email(first_name, doc_number, doc_type, logo_path=None):
       <!-- Sign-off -->
       <tr><td style="padding:24px 40px 32px 40px;">
         <p style="font-family:'Nunito Sans','Avenir',Arial,sans-serif;font-size:16px;color:#0E0E0E;line-height:26px;margin:0 0 4px 0;">Warmest Regards,</p>
-        <p style="font-family:'Nunito Sans','Avenir',Arial,sans-serif;font-size:16px;color:#0E0E0E;font-weight:700;line-height:26px;margin:0 0 4px 0;">Joe Davis</p>
-        <p style="font-family:'Nunito Sans','Avenir',Arial,sans-serif;font-size:13px;color:#77600B;font-weight:600;letter-spacing:0.04em;margin:0;">Musical Director &amp; Multi-Instrumentalist</p>
+        <p style="font-family:'Nunito Sans','Avenir',Arial,sans-serif;font-size:16px;color:#0E0E0E;font-weight:700;line-height:26px;margin:0 0 4px 0;">{user['display_name']}</p>
+        {title_line}
       </td></tr>
       <!-- Divider -->
       <tr><td style="padding:0 40px;">
@@ -312,26 +422,16 @@ def build_html_email(first_name, doc_number, doc_type, logo_path=None):
       </td></tr>
       <!-- Footer -->
       <tr><td style="background-color:#0E0E0E;padding:28px 40px;border-radius:0 0 4px 4px;">
-        <p style="font-family:'Nunito Sans','Avenir',Arial,sans-serif;font-size:12px;text-align:center;margin:0 0 12px 0;">
-          <a href="https://www.joedavisarts.com" style="color:#DAB322;text-decoration:none;letter-spacing:0.06em;">www.joedavisarts.com</a>
-        </p>
-        <p style="font-family:'Nunito Sans','Avenir',Arial,sans-serif;font-size:11px;color:#888888;text-align:center;margin:0 0 14px 0;">
-          <a href="https://www.instagram.com/joedavismusic" style="color:#888888;text-decoration:none;">Instagram</a>
-          <span style="color:#333333;">&nbsp;&middot;&nbsp;</span>
-          <a href="https://www.youtube.com/JoeDavisMusic" style="color:#888888;text-decoration:none;">YouTube</a>
-          <span style="color:#333333;">&nbsp;&middot;&nbsp;</span>
-          <a href="https://www.tiktok.com/@joedavismusic" style="color:#888888;text-decoration:none;">TikTok</a>
-          <span style="color:#333333;">&nbsp;&middot;&nbsp;</span>
-          <a href="https://jm.linkedin.com/in/joedavisarts" style="color:#888888;text-decoration:none;">LinkedIn</a>
-        </p>
+        {website_html}
+        {social_html}
         <table border="0" cellpadding="0" cellspacing="0" align="center" width="40%">
-          <tr><td height="1" style="background-color:#77600B;font-size:0;line-height:0;">&nbsp;</td></tr>
+          <tr><td height="1" style="background-color:{accent_dark};font-size:0;line-height:0;">&nbsp;</td></tr>
         </table>
-        <p style="font-family:'Nunito Sans','Avenir',Arial,sans-serif;font-size:11px;color:#555555;text-align:center;margin:12px 0 4px 0;">This email was sent by Joe Davis Arts &amp; Media.</p>
+        <p style="font-family:'Nunito Sans','Avenir',Arial,sans-serif;font-size:11px;color:#555555;text-align:center;margin:12px 0 4px 0;">This email was sent by {biz}.</p>
         <p style="font-family:'Nunito Sans','Avenir',Arial,sans-serif;font-size:11px;color:#555555;text-align:center;margin:0;">Any questions? Just reply directly.</p>
       </td></tr>
       <!-- Bottom bar -->
-      <tr><td height="4" style="background-color:#77600B;font-size:0;line-height:0;">&nbsp;</td></tr>
+      <tr><td height="4" style="background-color:{accent_dark};font-size:0;line-height:0;">&nbsp;</td></tr>
     </table>
   </td></tr>
 </table>
@@ -342,13 +442,13 @@ def build_html_email(first_name, doc_number, doc_type, logo_path=None):
 
 
 def _build_mime_message(to_email, subject, html_body, plain_text,
-                        pdf_bytes, pdf_filename, logo_path=None):
+                        pdf_bytes, pdf_filename, logo_path, user):
     msg = MIMEMultipart('related')
-    msg['From'] = 'Joe Davis Arts & Media <bookings@joedavisarts.com>'
+    msg['From'] = f"{user['business_name']} <{user['email']}>"
     msg['To'] = to_email
     msg['Subject'] = subject
-    msg['Reply-To'] = 'bookings@joedavisarts.com'
-    msg['X-Mailer'] = 'Ledger - Joe Davis Arts & Media'
+    msg['Reply-To'] = user.get('business_email') or user['email']
+    msg['X-Mailer'] = f"Quilk - {user['business_name']}"
 
     alt = MIMEMultipart('alternative')
     alt.attach(MIMEText(plain_text, 'plain', 'utf-8'))
@@ -377,11 +477,12 @@ def _pdf_email_filename(doc_number):
     return doc_number + '.pdf'
 
 
-def _doc_subject(doc_type):
+def _doc_subject(doc_type, user):
+    biz = user['business_name']
     return {
-        'invoice': 'Confidential: Invoice - Joe Davis Arts & Media',
-        'quote': 'Confidential: Quote - Joe Davis Arts & Media',
-        'receipt': 'Important: Receipt - Joe Davis Arts & Media',
+        'invoice': f'Confidential: Invoice - {biz}',
+        'quote':   f'Confidential: Quote - {biz}',
+        'receipt': f'Important: Receipt - {biz}',
     }[doc_type]
 
 
@@ -396,13 +497,15 @@ def dashboard():
         db.execute(
             "SELECT d.*, c.name AS client_name FROM documents d "
             "LEFT JOIN clients c ON d.client_id = c.id "
-            "ORDER BY d.created_at DESC LIMIT 10"
+            "WHERE d.user_id=? ORDER BY d.created_at DESC LIMIT 10",
+            (current_user.id,),
         ).fetchall()
     )
     counts = {}
     for dt in ('invoice', 'quote', 'receipt'):
         row = db.execute(
-            "SELECT COUNT(*) AS n FROM documents WHERE doc_type=?", (dt,)
+            "SELECT COUNT(*) AS n FROM documents WHERE doc_type=? AND user_id=?",
+            (dt, current_user.id),
         ).fetchone()
         counts[dt] = row['n']
     db.close()
@@ -424,15 +527,15 @@ def new_document(doc_type):
         data = request.form
         client_id = data.get('client_id') or None
 
-        # Inline client creation
         if data.get('new_client_name'):
             cur = db.execute(
                 "INSERT INTO clients (name,email,phone,address_line1,"
-                "address_line2,city,country,notes) VALUES (?,?,?,?,?,?,?,?)",
+                "address_line2,city,country,notes,user_id) VALUES (?,?,?,?,?,?,?,?,?)",
                 (data['new_client_name'], data.get('new_client_email'),
                  data.get('new_client_phone'), data.get('new_client_addr1'),
                  data.get('new_client_addr2'), data.get('new_client_city'),
-                 data.get('new_client_country'), data.get('new_client_notes'))
+                 data.get('new_client_country'), data.get('new_client_notes'),
+                 current_user.id),
             )
             client_id = cur.lastrowid
             db.commit()
@@ -453,34 +556,31 @@ def new_document(doc_type):
         pay_by_date = data.get('pay_by_date') or None
 
         subtotal, discount, tax_amount, amount_due = _compute_totals(
-            line_items, discount_val, discount_type,
-            tax_val, tax_type, paid_amount
+            line_items, discount_val, discount_type, tax_val, tax_type, paid_amount
         )
 
-        doc_number = next_doc_number(doc_type)
+        prefix = getattr(current_user, f'doc_prefix_{doc_type}')
+        doc_number = next_doc_number(doc_type, current_user.id, prefix)
 
         cur = db.execute(
             "INSERT INTO documents (doc_type,doc_number,client_id,date_issued,"
             "currency,line_items,subtotal,discount,tax_amount,paid_amount,"
-            "amount_due,status,notes,pay_by_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "amount_due,status,notes,pay_by_date,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (doc_type, doc_number, client_id, doc_date, currency,
              json.dumps(line_items), subtotal, discount, tax_amount,
-             paid_amount, amount_due, 'pending', notes, pay_by_date)
+             paid_amount, amount_due, 'pending', notes, pay_by_date,
+             current_user.id),
         )
         doc_id = cur.lastrowid
         db.commit()
 
-        # Auto-save line items to item library
         for item in line_items:
             _upsert_item_library(
-                db,
-                item.get('description', ''),
-                item.get('unit_price', 0),
-                currency
+                db, item.get('description', ''), item.get('unit_price', 0),
+                currency, current_user.id,
             )
         db.commit()
 
-        # Save template if requested
         if data.get('save_template_name') and line_items:
             first = line_items[0]
             db.execute(
@@ -489,17 +589,18 @@ def new_document(doc_type):
                 "tax_rate,notes) VALUES (?,?,?,?,?,?,?,?,?)",
                 (client_id, data['save_template_name'],
                  first.get('description'), first.get('unit_price'),
-                 currency, first.get('qty', 1),
-                 discount_val, tax_val, notes)
+                 currency, first.get('qty', 1), discount_val, tax_val, notes),
             )
             db.commit()
 
         db.close()
         return redirect(url_for('document_view', doc_id=doc_id))
 
-    # GET
     clients = _rows_to_list(
-        db.execute("SELECT id, name FROM clients ORDER BY name").fetchall()
+        db.execute(
+            "SELECT id, name FROM clients WHERE user_id=? ORDER BY name",
+            (current_user.id,),
+        ).fetchall()
     )
     db.close()
     today = date.today().isoformat()
@@ -514,6 +615,13 @@ def new_document(doc_type):
 @app.route('/api/clients/<int:client_id>/templates')
 def client_templates(client_id):
     db = get_db()
+    owner = db.execute(
+        "SELECT id FROM clients WHERE id=? AND user_id=?",
+        (client_id, current_user.id),
+    ).fetchone()
+    if not owner:
+        db.close()
+        return jsonify([])
     rows = _rows_to_list(
         db.execute(
             "SELECT * FROM client_templates WHERE client_id=?", (client_id,)
@@ -538,14 +646,14 @@ def save_item_to_library():
         return jsonify({'error': 'Description required'}), 400
 
     db = get_db()
-    _upsert_item_library(db, description, unit_price, currency)
+    _upsert_item_library(db, description, unit_price, currency, current_user.id)
     db.commit()
     db.close()
     return jsonify({'ok': True})
 
 
 # ---------------------------------------------------------------------------
-# Document search API (for Import Items modal)
+# Document search API
 # ---------------------------------------------------------------------------
 
 @app.route('/api/documents/search')
@@ -557,15 +665,16 @@ def search_documents():
         rows = _rows_to_list(db.execute(
             "SELECT d.*, c.name AS client_name FROM documents d "
             "LEFT JOIN clients c ON d.client_id = c.id "
-            "WHERE d.doc_number LIKE ? OR c.name LIKE ? "
+            "WHERE d.user_id=? AND (d.doc_number LIKE ? OR c.name LIKE ?) "
             "ORDER BY d.created_at DESC LIMIT 50",
-            (f'%{q}%', f'%{q}%')
+            (current_user.id, f'%{q}%', f'%{q}%'),
         ).fetchall())
     else:
         rows = _rows_to_list(db.execute(
             "SELECT d.*, c.name AS client_name FROM documents d "
             "LEFT JOIN clients c ON d.client_id = c.id "
-            "ORDER BY d.created_at DESC LIMIT 50"
+            "WHERE d.user_id=? ORDER BY d.created_at DESC LIMIT 50",
+            (current_user.id,),
         ).fetchall())
 
     for row in rows:
@@ -586,7 +695,8 @@ def clients():
         db.execute(
             "SELECT c.*, COUNT(d.id) AS doc_count "
             "FROM clients c LEFT JOIN documents d ON d.client_id = c.id "
-            "GROUP BY c.id ORDER BY c.name"
+            "WHERE c.user_id=? GROUP BY c.id ORDER BY c.name",
+            (current_user.id,),
         ).fetchall()
     )
     db.close()
@@ -597,14 +707,17 @@ def clients():
 def client_detail(client_id):
     db = get_db()
     client = _row_to_dict(
-        db.execute("SELECT * FROM clients WHERE id=?", (client_id,)).fetchone()
+        db.execute(
+            "SELECT * FROM clients WHERE id=? AND user_id=?",
+            (client_id, current_user.id),
+        ).fetchone()
     )
     if not client:
         abort(404)
     docs = _rows_to_list(
         db.execute(
-            "SELECT * FROM documents WHERE client_id=? ORDER BY created_at DESC",
-            (client_id,)
+            "SELECT * FROM documents WHERE client_id=? AND user_id=? ORDER BY created_at DESC",
+            (client_id, current_user.id),
         ).fetchall()
     )
     templates = _rows_to_list(
@@ -621,7 +734,10 @@ def client_detail(client_id):
 def client_edit(client_id):
     db = get_db()
     client = _row_to_dict(
-        db.execute("SELECT * FROM clients WHERE id=?", (client_id,)).fetchone()
+        db.execute(
+            "SELECT * FROM clients WHERE id=? AND user_id=?",
+            (client_id, current_user.id),
+        ).fetchone()
     )
     if not client:
         abort(404)
@@ -630,10 +746,11 @@ def client_edit(client_id):
         d = request.form
         db.execute(
             "UPDATE clients SET name=?,email=?,phone=?,address_line1=?,"
-            "address_line2=?,city=?,country=?,notes=? WHERE id=?",
+            "address_line2=?,city=?,country=?,notes=? WHERE id=? AND user_id=?",
             (d['name'], d.get('email'), d.get('phone'),
              d.get('address_line1'), d.get('address_line2'),
-             d.get('city'), d.get('country'), d.get('notes'), client_id)
+             d.get('city'), d.get('country'), d.get('notes'),
+             client_id, current_user.id),
         )
         db.commit()
         db.close()
@@ -647,8 +764,17 @@ def client_edit(client_id):
            methods=['POST'])
 def delete_template(client_id, tmpl_id):
     db = get_db()
-    db.execute("DELETE FROM client_templates WHERE id=? AND client_id=?",
-               (tmpl_id, client_id))
+    owner = db.execute(
+        "SELECT id FROM clients WHERE id=? AND user_id=?",
+        (client_id, current_user.id),
+    ).fetchone()
+    if not owner:
+        db.close()
+        abort(403)
+    db.execute(
+        "DELETE FROM client_templates WHERE id=? AND client_id=?",
+        (tmpl_id, client_id),
+    )
     db.commit()
     db.close()
     return redirect(url_for('client_detail', client_id=client_id))
@@ -660,8 +786,14 @@ def bulk_delete_clients():
     if client_ids:
         ph = ','.join('?' * len(client_ids))
         db = get_db()
-        db.execute(f"UPDATE documents SET client_id=NULL WHERE client_id IN ({ph})", client_ids)
-        db.execute(f"DELETE FROM clients WHERE id IN ({ph})", client_ids)
+        db.execute(
+            f"UPDATE documents SET client_id=NULL WHERE client_id IN ({ph}) AND user_id=?",
+            [*client_ids, current_user.id],
+        )
+        db.execute(
+            f"DELETE FROM clients WHERE id IN ({ph}) AND user_id=?",
+            [*client_ids, current_user.id],
+        )
         db.commit()
         db.close()
     return redirect(url_for('clients'))
@@ -671,14 +803,17 @@ def bulk_delete_clients():
 def export_client(client_id):
     db = get_db()
     client = _row_to_dict(
-        db.execute("SELECT * FROM clients WHERE id=?", (client_id,)).fetchone()
+        db.execute(
+            "SELECT * FROM clients WHERE id=? AND user_id=?",
+            (client_id, current_user.id),
+        ).fetchone()
     )
     if not client:
         abort(404)
     docs = _rows_to_list(
         db.execute(
-            "SELECT * FROM documents WHERE client_id=? ORDER BY created_at DESC",
-            (client_id,)
+            "SELECT * FROM documents WHERE client_id=? AND user_id=? ORDER BY created_at DESC",
+            (client_id, current_user.id),
         ).fetchall()
     )
     for d in docs:
@@ -700,9 +835,11 @@ def documents():
     db = get_db()
     doc_type = request.args.get('type', '')
     status = request.args.get('status', '')
-    query = ("SELECT d.*, c.name AS client_name FROM documents d "
-             "LEFT JOIN clients c ON d.client_id = c.id WHERE 1=1")
-    params = []
+    query = (
+        "SELECT d.*, c.name AS client_name FROM documents d "
+        "LEFT JOIN clients c ON d.client_id = c.id WHERE d.user_id=?"
+    )
+    params = [current_user.id]
     if doc_type:
         query += " AND d.doc_type=?"
         params.append(doc_type)
@@ -720,7 +857,10 @@ def documents():
 def document_view(doc_id):
     db = get_db()
     doc = _row_to_dict(
-        db.execute("SELECT * FROM documents WHERE id=?", (doc_id,)).fetchone()
+        db.execute(
+            "SELECT * FROM documents WHERE id=? AND user_id=?",
+            (doc_id, current_user.id),
+        ).fetchone()
     )
     if not doc:
         abort(404)
@@ -732,14 +872,13 @@ def document_view(doc_id):
     sent_logs = _rows_to_list(
         db.execute(
             "SELECT * FROM sent_log WHERE doc_id=? ORDER BY sent_at DESC",
-            (doc_id,)
+            (doc_id,),
         ).fetchall()
     )
-    # Check for linked documents
     linked_doc = _row_to_dict(
         db.execute(
-            "SELECT id, doc_type FROM documents WHERE source_document_id=? LIMIT 1",
-            (doc_id,)
+            "SELECT id, doc_type FROM documents WHERE source_document_id=? AND user_id=? LIMIT 1",
+            (doc_id, current_user.id),
         ).fetchone()
     )
     db.close()
@@ -751,7 +890,10 @@ def document_view(doc_id):
 def document_pdf(doc_id):
     db = get_db()
     doc = _row_to_dict(
-        db.execute("SELECT * FROM documents WHERE id=?", (doc_id,)).fetchone()
+        db.execute(
+            "SELECT * FROM documents WHERE id=? AND user_id=?",
+            (doc_id, current_user.id),
+        ).fetchone()
     )
     if not doc:
         abort(404)
@@ -762,7 +904,7 @@ def document_pdf(doc_id):
     ) or {}
     db.close()
 
-    pdf_bytes = generate_pdf(doc, client)
+    pdf_bytes = generate_pdf(doc, client, current_user.to_dict())
     buf = io.BytesIO(pdf_bytes)
     buf.seek(0)
     filename = f"{doc['doc_number']}.pdf"
@@ -776,7 +918,10 @@ def set_status(doc_id):
     status = request.form.get('status', '')
     if status:
         db = get_db()
-        db.execute("UPDATE documents SET status=? WHERE id=?", (status, doc_id))
+        db.execute(
+            "UPDATE documents SET status=? WHERE id=? AND user_id=?",
+            (status, doc_id, current_user.id),
+        )
         db.commit()
         db.close()
     return redirect(url_for('document_view', doc_id=doc_id))
@@ -786,20 +931,23 @@ def set_status(doc_id):
 def create_invoice_from_quote(doc_id):
     db = get_db()
     quote = _row_to_dict(
-        db.execute("SELECT * FROM documents WHERE id=? AND doc_type='quote'", (doc_id,)).fetchone()
+        db.execute(
+            "SELECT * FROM documents WHERE id=? AND doc_type='quote' AND user_id=?",
+            (doc_id, current_user.id),
+        ).fetchone()
     )
     if not quote:
         db.close()
         abort(400)
-    doc_number = next_doc_number('invoice')
+    doc_number = next_doc_number('invoice', current_user.id, current_user.doc_prefix_invoice)
     cur = db.execute(
         "INSERT INTO documents (doc_type,doc_number,client_id,date_issued,currency,"
-        "line_items,subtotal,discount,tax_amount,paid_amount,amount_due,status,notes,source_document_id)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "line_items,subtotal,discount,tax_amount,paid_amount,amount_due,status,notes,"
+        "source_document_id,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         ('invoice', doc_number, quote['client_id'], date.today().isoformat(),
          quote['currency'], quote['line_items'], quote['subtotal'],
          quote['discount'], quote['tax_amount'], 0,
-         quote['amount_due'], 'pending', quote['notes'], doc_id)
+         quote['amount_due'], 'pending', quote['notes'], doc_id, current_user.id),
     )
     invoice_id = cur.lastrowid
     db.commit()
@@ -814,8 +962,15 @@ def bulk_delete_documents():
         ph = ','.join('?' * len(doc_ids))
         db = get_db()
         db.execute(f"DELETE FROM sent_log WHERE doc_id IN ({ph})", doc_ids)
-        db.execute(f"UPDATE documents SET source_document_id=NULL WHERE source_document_id IN ({ph})", doc_ids)
-        db.execute(f"DELETE FROM documents WHERE id IN ({ph})", doc_ids)
+        db.execute(
+            f"UPDATE documents SET source_document_id=NULL "
+            f"WHERE source_document_id IN ({ph}) AND user_id=?",
+            [*doc_ids, current_user.id],
+        )
+        db.execute(
+            f"DELETE FROM documents WHERE id IN ({ph}) AND user_id=?",
+            [*doc_ids, current_user.id],
+        )
         db.commit()
         db.close()
     return redirect(url_for('documents'))
@@ -825,8 +980,13 @@ def bulk_delete_documents():
 def delete_document(doc_id):
     db = get_db()
     db.execute("DELETE FROM sent_log WHERE doc_id=?", (doc_id,))
-    db.execute("UPDATE documents SET source_document_id=NULL WHERE source_document_id=?", (doc_id,))
-    db.execute("DELETE FROM documents WHERE id=?", (doc_id,))
+    db.execute(
+        "UPDATE documents SET source_document_id=NULL WHERE source_document_id=? AND user_id=?",
+        (doc_id, current_user.id),
+    )
+    db.execute(
+        "DELETE FROM documents WHERE id=? AND user_id=?", (doc_id, current_user.id)
+    )
     db.commit()
     db.close()
     return redirect(url_for('documents'))
@@ -839,7 +999,8 @@ def export_csv():
         db.execute(
             "SELECT d.*, c.name AS client_name FROM documents d "
             "LEFT JOIN clients c ON d.client_id = c.id "
-            "ORDER BY d.created_at DESC"
+            "WHERE d.user_id=? ORDER BY d.created_at DESC",
+            (current_user.id,),
         ).fetchall()
     )
     db.close()
@@ -866,7 +1027,10 @@ def export_csv():
 def edit_document(doc_id):
     db = get_db()
     doc = _row_to_dict(
-        db.execute("SELECT * FROM documents WHERE id=?", (doc_id,)).fetchone()
+        db.execute(
+            "SELECT * FROM documents WHERE id=? AND user_id=?",
+            (doc_id, current_user.id),
+        ).fetchone()
     )
     if not doc:
         db.close()
@@ -890,17 +1054,16 @@ def edit_document(doc_id):
         status = data.get('status', doc['status'])
 
         subtotal, discount, tax_amount, amount_due = _compute_totals(
-            line_items, discount_val, discount_type,
-            tax_val, tax_type, paid_amount
+            line_items, discount_val, discount_type, tax_val, tax_type, paid_amount
         )
 
         db.execute(
             "UPDATE documents SET client_id=?,date_issued=?,currency=?,line_items=?,"
             "subtotal=?,discount=?,tax_amount=?,paid_amount=?,amount_due=?,"
-            "notes=?,pay_by_date=?,status=? WHERE id=?",
+            "notes=?,pay_by_date=?,status=? WHERE id=? AND user_id=?",
             (client_id, doc_date, currency, json.dumps(line_items),
              subtotal, discount, tax_amount, paid_amount, amount_due,
-             notes, pay_by_date, status, doc_id)
+             notes, pay_by_date, status, doc_id, current_user.id),
         )
         db.commit()
         db.close()
@@ -909,7 +1072,10 @@ def edit_document(doc_id):
         return redirect(url_for('document_view', doc_id=doc_id))
 
     clients = _rows_to_list(
-        db.execute("SELECT id, name FROM clients ORDER BY name").fetchall()
+        db.execute(
+            "SELECT id, name FROM clients WHERE user_id=? ORDER BY name",
+            (current_user.id,),
+        ).fetchall()
     )
     db.close()
     return render_template('edit_document.html', doc=doc, clients=clients)
@@ -923,7 +1089,10 @@ def edit_document(doc_id):
 def send_document(doc_id):
     db = get_db()
     doc = _row_to_dict(
-        db.execute("SELECT * FROM documents WHERE id=?", (doc_id,)).fetchone()
+        db.execute(
+            "SELECT * FROM documents WHERE id=? AND user_id=?",
+            (doc_id, current_user.id),
+        ).fetchone()
     )
     if not doc:
         db.close()
@@ -935,9 +1104,10 @@ def send_document(doc_id):
     ) or {}
     db.close()
 
+    user_dict = current_user.to_dict()
     first_name = (client.get('name') or '').split()[0] if client.get('name') else 'there'
-    subject = _doc_subject(doc['doc_type'])
-    email_body = _email_body_text(first_name, doc['doc_number'], doc['doc_type'])
+    subject = _doc_subject(doc['doc_type'], user_dict)
+    email_body = _email_body_text(first_name, doc['doc_number'], doc['doc_type'], user_dict)
     pdf_filename = _pdf_email_filename(doc['doc_number'])
     to_email = client.get('email', '')
 
@@ -949,19 +1119,19 @@ def send_document(doc_id):
                                to_email=to_email,
                                error=None)
 
-    # POST
     to_email = request.form.get('to_email', '').strip()
     subject = request.form.get('subject', subject).strip()
+    logo_path = os.path.join(ASSETS_DIR, current_user.logo_filename or 'logo.png')
 
     db = get_db()
     try:
-        pdf_bytes = generate_pdf(doc, client)
+        pdf_bytes = generate_pdf(doc, client, user_dict)
         html_body, plain_text = build_html_email(
-            first_name, doc['doc_number'], doc['doc_type'], LOGO_PATH
+            first_name, doc['doc_number'], doc['doc_type'], logo_path, user_dict
         )
         msg = _build_mime_message(
             to_email, subject, html_body, plain_text,
-            pdf_bytes, pdf_filename, LOGO_PATH
+            pdf_bytes, pdf_filename, logo_path, user_dict,
         )
 
         gmail = _get_gmail_service()
@@ -970,18 +1140,21 @@ def send_document(doc_id):
 
         db.execute(
             "INSERT INTO sent_log (doc_id,recipient_email,subject,status) VALUES (?,?,?,?)",
-            (doc_id, to_email, subject, 'sent')
+            (doc_id, to_email, subject, 'sent'),
         )
         db.commit()
         db.close()
 
-        flash(f'Email sent to {to_email} on {datetime.now().strftime("%B %d, %Y at %H:%M")}.', 'success')
+        flash(
+            f'Email sent to {to_email} on {datetime.now().strftime("%B %d, %Y at %H:%M")}.',
+            'success',
+        )
         return redirect(url_for('document_view', doc_id=doc_id))
 
     except Exception as e:
         db.execute(
             "INSERT INTO sent_log (doc_id,recipient_email,subject,status,error_message) VALUES (?,?,?,?,?)",
-            (doc_id, to_email, subject, 'failed', str(e))
+            (doc_id, to_email, subject, 'failed', str(e)),
         )
         db.commit()
         db.close()
