@@ -48,6 +48,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS clients (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id        INTEGER REFERENCES users(id),
+            company_name   TEXT,
             name           TEXT NOT NULL,
             email          TEXT,
             phone          TEXT,

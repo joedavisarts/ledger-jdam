@@ -20,7 +20,7 @@
         <select name="client_id" id="client_select">
           <option value="">— Choose client —</option>
           {% for c in clients %}
-          <option value="{{ c.id }}">{{ c.name }}</option>
+          <option value="{{ c.id }}">{{ c.display_name }}</option>
           {% endfor %}
         </select>
       </div>
@@ -37,8 +37,12 @@
 
       <div id="new-client-fields">
         <div class="field">
-          <label>Name</label>
-          <input type="text" name="new_client_name" id="new_client_name" placeholder="Full name / Company" />
+          <label>Company Name</label>
+          <input type="text" name="new_client_company_name" placeholder="Acme Corp (optional)" />
+        </div>
+        <div class="field">
+          <label>Contact Name</label>
+          <input type="text" name="new_client_name" id="new_client_name" placeholder="Full name (optional)" />
         </div>
         <div class="field-row field-row-stack-mobile">
           <div class="field">

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Edit {{ client.name }} — Quilk{% endblock %}
+{% block title %}Edit {{ client.company_name or client.name }} — Quilk{% endblock %}
 {% block content %}
 <div class="page-header">
   <h1>Edit Client</h1>
@@ -9,8 +9,12 @@
   <div class="form-card" style="max-width:640px">
     <h2 class="card-title">Client Info</h2>
     <div class="field">
-      <label>Name *</label>
-      <input type="text" name="name" value="{{ client.name }}" required />
+      <label>Company Name</label>
+      <input type="text" name="company_name" value="{{ client.company_name or '' }}" placeholder="Acme Corp (optional)" />
+    </div>
+    <div class="field">
+      <label>Contact Name</label>
+      <input type="text" name="name" value="{{ client.name }}" placeholder="Full name (optional)" />
     </div>
     <div class="field-row">
       <div class="field">

@@ -26,7 +26,7 @@ const EDIT_LINE_ITEMS = {{ doc.line_items | tojson }};
         <select name="client_id" id="client_select">
           <option value="">— Choose client —</option>
           {% for c in clients %}
-          <option value="{{ c.id }}" {% if c.id == doc.client_id %}selected{% endif %}>{{ c.name }}</option>
+          <option value="{{ c.id }}" {% if c.id == doc.client_id %}selected{% endif %}>{{ c.display_name }}</option>
           {% endfor %}
         </select>
       </div>

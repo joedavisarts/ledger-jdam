@@ -28,7 +28,7 @@
     <tr class="clickable" data-href="{{ url_for('client_detail', client_id=c.id) }}">
       <td onclick="event.stopPropagation()"><input type="checkbox" name="client_ids" value="{{ c.id }}" class="client-checkbox" style="accent-color:var(--gold);cursor:pointer;"></td>
       <td onclick="event.stopPropagation()"><a href="{{ url_for('client_detail', client_id=c.id) }}" class="btn btn-xs btn-outline">View</a></td>
-      <td class="strong">{{ c.name }}</td>
+      <td class="strong">{{ c.display_name }}</td>
       <td>{{ c.email or '—' }}</td>
       <td style="white-space:nowrap;">{{ c.phone or '—' }}</td>
       <td>{{ c.city or '—' }}</td>

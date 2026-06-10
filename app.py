@@ -495,9 +495,9 @@ def dashboard():
     db = get_db()
     recent = _rows_to_list(
         db.execute(
-            "SELECT d.*, c.name AS client_name FROM documents d "
-            "LEFT JOIN clients c ON d.client_id = c.id "
-            "WHERE d.user_id=? ORDER BY d.created_at DESC LIMIT 10",
+            "SELECT d.*, COALESCE(NULLIF(c.company_name,''), c.name) AS client_name"
+            " FROM documents d LEFT JOIN clients c ON d.client_id = c.id"
+            " WHERE d.user_id=? ORDER BY d.created_at DESC LIMIT 10",
             (current_user.id,),
         ).fetchall()
     )
@@ -527,11 +527,13 @@ def new_document(doc_type):
         data = request.form
         client_id = data.get('client_id') or None
 
-        if data.get('new_client_name'):
+        new_name = data.get('new_client_name', '').strip()
+        new_company = data.get('new_client_company_name', '').strip()
+        if new_name or new_company:
             cur = db.execute(
-                "INSERT INTO clients (name,email,phone,address_line1,"
-                "address_line2,city,country,notes,user_id) VALUES (?,?,?,?,?,?,?,?,?)",
-                (data['new_client_name'], data.get('new_client_email'),
+                "INSERT INTO clients (company_name,name,email,phone,address_line1,"
+                "address_line2,city,country,notes,user_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (new_company or None, new_name, data.get('new_client_email'),
                  data.get('new_client_phone'), data.get('new_client_addr1'),
                  data.get('new_client_addr2'), data.get('new_client_city'),
                  data.get('new_client_country'), data.get('new_client_notes'),
@@ -598,7 +600,10 @@ def new_document(doc_type):
 
     clients = _rows_to_list(
         db.execute(
-            "SELECT id, name FROM clients WHERE user_id=? ORDER BY name",
+            "SELECT id, name, company_name,"
+            " COALESCE(NULLIF(company_name,''), name) AS display_name"
+            " FROM clients WHERE user_id=?"
+            " ORDER BY COALESCE(NULLIF(company_name,''), name)",
             (current_user.id,),
         ).fetchall()
     )
@@ -663,17 +668,17 @@ def search_documents():
 
     if q:
         rows = _rows_to_list(db.execute(
-            "SELECT d.*, c.name AS client_name FROM documents d "
-            "LEFT JOIN clients c ON d.client_id = c.id "
-            "WHERE d.user_id=? AND (d.doc_number LIKE ? OR c.name LIKE ?) "
-            "ORDER BY d.created_at DESC LIMIT 50",
-            (current_user.id, f'%{q}%', f'%{q}%'),
+            "SELECT d.*, COALESCE(NULLIF(c.company_name,''), c.name) AS client_name"
+            " FROM documents d LEFT JOIN clients c ON d.client_id = c.id"
+            " WHERE d.user_id=? AND (d.doc_number LIKE ? OR c.name LIKE ? OR c.company_name LIKE ?)"
+            " ORDER BY d.created_at DESC LIMIT 50",
+            (current_user.id, f'%{q}%', f'%{q}%', f'%{q}%'),
         ).fetchall())
     else:
         rows = _rows_to_list(db.execute(
-            "SELECT d.*, c.name AS client_name FROM documents d "
-            "LEFT JOIN clients c ON d.client_id = c.id "
-            "WHERE d.user_id=? ORDER BY d.created_at DESC LIMIT 50",
+            "SELECT d.*, COALESCE(NULLIF(c.company_name,''), c.name) AS client_name"
+            " FROM documents d LEFT JOIN clients c ON d.client_id = c.id"
+            " WHERE d.user_id=? ORDER BY d.created_at DESC LIMIT 50",
             (current_user.id,),
         ).fetchall())
 
@@ -693,9 +698,11 @@ def clients():
     db = get_db()
     rows = _rows_to_list(
         db.execute(
-            "SELECT c.*, COUNT(d.id) AS doc_count "
-            "FROM clients c LEFT JOIN documents d ON d.client_id = c.id "
-            "WHERE c.user_id=? GROUP BY c.id ORDER BY c.name",
+            "SELECT c.*, COUNT(d.id) AS doc_count,"
+            " COALESCE(NULLIF(c.company_name,''), c.name) AS display_name"
+            " FROM clients c LEFT JOIN documents d ON d.client_id = c.id"
+            " WHERE c.user_id=? GROUP BY c.id"
+            " ORDER BY COALESCE(NULLIF(c.company_name,''), c.name)",
             (current_user.id,),
         ).fetchall()
     )
@@ -745,9 +752,9 @@ def client_edit(client_id):
     if request.method == 'POST':
         d = request.form
         db.execute(
-            "UPDATE clients SET name=?,email=?,phone=?,address_line1=?,"
+            "UPDATE clients SET company_name=?,name=?,email=?,phone=?,address_line1=?,"
             "address_line2=?,city=?,country=?,notes=? WHERE id=? AND user_id=?",
-            (d['name'], d.get('email'), d.get('phone'),
+            (d.get('company_name') or None, d['name'], d.get('email'), d.get('phone'),
              d.get('address_line1'), d.get('address_line2'),
              d.get('city'), d.get('country'), d.get('notes'),
              client_id, current_user.id),
@@ -836,8 +843,8 @@ def documents():
     doc_type = request.args.get('type', '')
     status = request.args.get('status', '')
     query = (
-        "SELECT d.*, c.name AS client_name FROM documents d "
-        "LEFT JOIN clients c ON d.client_id = c.id WHERE d.user_id=?"
+        "SELECT d.*, COALESCE(NULLIF(c.company_name,''), c.name) AS client_name"
+        " FROM documents d LEFT JOIN clients c ON d.client_id = c.id WHERE d.user_id=?"
     )
     params = [current_user.id]
     if doc_type:
@@ -997,9 +1004,9 @@ def export_csv():
     db = get_db()
     rows = _rows_to_list(
         db.execute(
-            "SELECT d.*, c.name AS client_name FROM documents d "
-            "LEFT JOIN clients c ON d.client_id = c.id "
-            "WHERE d.user_id=? ORDER BY d.created_at DESC",
+            "SELECT d.*, COALESCE(NULLIF(c.company_name,''), c.name) AS client_name"
+            " FROM documents d LEFT JOIN clients c ON d.client_id = c.id"
+            " WHERE d.user_id=? ORDER BY d.created_at DESC",
             (current_user.id,),
         ).fetchall()
     )
@@ -1073,7 +1080,10 @@ def edit_document(doc_id):
 
     clients = _rows_to_list(
         db.execute(
-            "SELECT id, name FROM clients WHERE user_id=? ORDER BY name",
+            "SELECT id, name, company_name,"
+            " COALESCE(NULLIF(company_name,''), name) AS display_name"
+            " FROM clients WHERE user_id=?"
+            " ORDER BY COALESCE(NULLIF(company_name,''), name)",
             (current_user.id,),
         ).fetchall()
     )
