@@ -52,7 +52,7 @@
       <h3>Add Client</h3>
       <button type="button" class="modal-close" onclick="closeAddClient()" aria-label="Close">&times;</button>
     </div>
-    <form method="POST" action="{{ url_for('clients') }}" id="add-client-form" style="padding:24px 28px 20px;flex:1;overflow-y:auto;">
+    <form method="POST" action="{{ url_for('clients') }}" id="add-client-form" style="padding:24px 28px 20px;flex:1;min-height:0;overflow-y:auto;">
       <div class="field">
         <label>Company Name</label>
         <input type="text" name="company_name" id="ac-company" placeholder="Acme Corp (optional)" autocomplete="organization" />
@@ -110,11 +110,17 @@
     </div>
 
     <!-- Step 1: file pick -->
-    <div id="import-step-1" style="padding:24px 28px 20px;flex:1;overflow-y:auto;">
+    <div id="import-step-1" style="padding:24px 28px 20px;flex:1;min-height:0;overflow-y:auto;">
       <p style="margin-bottom:16px;color:#888;font-size:13.5px;">Upload a CSV file. You'll map columns to client fields on the next screen.</p>
-      <div class="field">
-        <label>CSV File</label>
-        <input type="file" id="import-file-input" accept=".csv,text/csv" style="padding:6px 0;" />
+      <input type="file" id="import-file-input" accept=".csv,text/csv" style="display:none;" />
+      <label for="import-file-input" id="import-dropzone">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4;"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+        <div><strong style="font-weight:500;">Click to browse</strong> <span style="color:#888;">or drag &amp; drop</span></div>
+        <div style="font-size:11.5px;color:#888;letter-spacing:.02em;">CSV files only</div>
+      </label>
+      <div id="import-file-chosen" style="display:none;margin-top:10px;padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.03);font-size:13px;align-items:center;gap:8px;">
+        <span style="color:var(--gold);font-size:12px;">✓</span>
+        <span id="import-file-chosen-name" style="word-break:break-all;"></span>
       </div>
       <div class="form-actions" style="margin-top:12px;">
         <button type="button" class="btn btn-outline" onclick="closeImportModal()">Cancel</button>
@@ -123,7 +129,7 @@
     </div>
 
     <!-- Step 2: mapping + preview -->
-    <div id="import-step-2" class="hidden" style="padding:24px 28px 20px;flex:1;overflow-y:auto;">
+    <div id="import-step-2" class="hidden" style="padding:24px 28px 20px;flex:1;min-height:0;overflow-y:auto;">
       <p style="margin-bottom:16px;color:#888;font-size:13.5px;">Match your CSV columns to Quilk fields. At least <strong>Company Name</strong> or <strong>Contact Name</strong> must be mapped.</p>
       <div id="import-mapping-grid"></div>
       <h4 style="margin:20px 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#888;">Preview — first 5 rows</h4>
@@ -138,7 +144,7 @@
     </div>
 
     <!-- Step 3: merge duplicates -->
-    <div id="import-step-3" class="hidden" style="padding:24px 28px 20px;flex:1;overflow-y:auto;">
+    <div id="import-step-3" class="hidden" style="padding:24px 28px 20px;flex:1;min-height:0;overflow-y:auto;">
       <p id="import-merge-header" style="margin-bottom:16px;color:#888;font-size:13.5px;"></p>
       <div id="import-merge-container"></div>
       <div class="form-actions" style="margin-top:16px;">
@@ -148,7 +154,7 @@
     </div>
 
     <!-- Step 4: result -->
-    <div id="import-step-4" class="hidden" style="padding:24px 28px 20px;flex:1;overflow-y:auto;">
+    <div id="import-step-4" class="hidden" style="padding:24px 28px 20px;flex:1;min-height:0;overflow-y:auto;">
       <div id="import-result-content"></div>
       <div class="form-actions" style="margin-top:16px;">
         <button type="button" class="btn btn-gold" onclick="closeImportModal(); window.location.reload();">Done</button>
@@ -247,6 +253,8 @@ function openImportModal() {
 function closeImportModal() {
   document.getElementById('import-csv-modal').classList.add('hidden');
   document.getElementById('import-file-input').value = '';
+  document.getElementById('import-file-chosen').style.display = 'none';
+  document.getElementById('import-next-btn').disabled = true;
   _importCSVText = ''; _importHeaders = []; _importRows = [];
   _importNormalRows = []; _importDuplicateGroups = [];
   _mergeDecisions = []; _importMergeCount = 0;
@@ -257,8 +265,36 @@ document.getElementById('import-csv-modal').addEventListener('click', function(e
 });
 
 document.getElementById('import-file-input').addEventListener('change', function() {
-  document.getElementById('import-next-btn').disabled = !this.files.length;
+  const hasFile = this.files.length > 0;
+  document.getElementById('import-next-btn').disabled = !hasFile;
+  const chosen = document.getElementById('import-file-chosen');
+  if (hasFile) {
+    document.getElementById('import-file-chosen-name').textContent = this.files[0].name;
+    chosen.style.display = 'flex';
+  } else {
+    chosen.style.display = 'none';
+  }
 });
+
+(function() {
+  const dz = document.getElementById('import-dropzone');
+  const input = document.getElementById('import-file-input');
+  ['dragover','dragenter'].forEach(evt =>
+    dz.addEventListener(evt, e => { e.preventDefault(); dz.classList.add('drag-over'); })
+  );
+  dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault();
+    dz.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+      input.dispatchEvent(new Event('change'));
+    }
+  });
+})();
 
 function showImportStep(n) {
   [1,2,3,4].forEach(i =>
