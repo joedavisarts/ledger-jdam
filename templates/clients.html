@@ -52,7 +52,7 @@
       <h3>Add Client</h3>
       <button type="button" class="modal-close" onclick="closeAddClient()" aria-label="Close">&times;</button>
     </div>
-    <form method="POST" action="{{ url_for('clients') }}" id="add-client-form" style="padding:24px 28px 20px;">
+    <form method="POST" action="{{ url_for('clients') }}" id="add-client-form" style="padding:24px 28px 20px;flex:1;overflow-y:auto;">
       <div class="field">
         <label>Company Name</label>
         <input type="text" name="company_name" id="ac-company" placeholder="Acme Corp (optional)" autocomplete="organization" />
@@ -110,7 +110,7 @@
     </div>
 
     <!-- Step 1: file pick -->
-    <div id="import-step-1" style="padding:24px 28px 20px;">
+    <div id="import-step-1" style="padding:24px 28px 20px;flex:1;overflow-y:auto;">
       <p style="margin-bottom:16px;color:#888;font-size:13.5px;">Upload a CSV file. You'll map columns to client fields on the next screen.</p>
       <div class="field">
         <label>CSV File</label>
@@ -123,7 +123,7 @@
     </div>
 
     <!-- Step 2: mapping + preview -->
-    <div id="import-step-2" class="hidden" style="padding:24px 28px 20px;">
+    <div id="import-step-2" class="hidden" style="padding:24px 28px 20px;flex:1;overflow-y:auto;">
       <p style="margin-bottom:16px;color:#888;font-size:13.5px;">Match your CSV columns to Quilk fields. At least <strong>Company Name</strong> or <strong>Contact Name</strong> must be mapped.</p>
       <div id="import-mapping-grid"></div>
       <h4 style="margin:20px 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#888;">Preview — first 5 rows</h4>
@@ -138,7 +138,7 @@
     </div>
 
     <!-- Step 3: result -->
-    <div id="import-step-3" class="hidden" style="padding:24px 28px 20px;">
+    <div id="import-step-3" class="hidden" style="padding:24px 28px 20px;flex:1;overflow-y:auto;">
       <div id="import-result-content"></div>
       <div class="form-actions" style="margin-top:16px;">
         <button type="button" class="btn btn-gold" onclick="closeImportModal(); window.location.reload();">Done</button>

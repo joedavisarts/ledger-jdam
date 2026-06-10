@@ -616,7 +616,7 @@ a:hover { text-decoration: underline; }
   box-shadow: 0 8px 40px rgba(0,0,0,0.6);
   width: 680px;
   max-width: 95vw;
-  max-height: 80vh;
+  max-height: 90vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
