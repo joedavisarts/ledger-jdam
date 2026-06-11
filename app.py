@@ -1947,6 +1947,32 @@ def api_view_pref():
     return jsonify({'ok': True})
 
 
+@app.route('/clients/export_selection_csv', methods=['POST'])
+@login_required
+def export_selection_clients_csv():
+    client_ids = [int(x) for x in request.form.getlist('client_ids') if x.isdigit()]
+    if not client_ids:
+        return redirect(url_for('clients'))
+    db = get_db()
+    ph = ','.join('?' * len(client_ids))
+    rows = _rows_to_list(db.execute(
+        f"SELECT * FROM clients WHERE id IN ({ph}) AND user_id=?",
+        [*client_ids, current_user.id],
+    ).fetchall())
+    db.close()
+    fields = ['company_name', 'name', 'email', 'phone',
+              'address_line1', 'address_line2', 'city', 'country', 'notes']
+    output = io.StringIO()
+    w = csv.DictWriter(output, fieldnames=fields, extrasaction='ignore')
+    w.writeheader()
+    for row in rows:
+        w.writerow({k: row.get(k) or '' for k in fields})
+    buf = io.BytesIO(output.getvalue().encode())
+    buf.seek(0)
+    return send_file(buf, mimetype='text/csv', as_attachment=True,
+                     download_name=f"clients_{date.today().isoformat()}.csv")
+
+
 @app.route('/clients/export_selection', methods=['POST'])
 @login_required
 def export_selection_clients():
@@ -1980,6 +2006,35 @@ def export_selection_clients():
     filename = f"quilk_clients_{date.today().isoformat()}.quilk"
     return send_file(buf, mimetype='application/json',
                      as_attachment=True, download_name=filename)
+
+
+@app.route('/documents/export_selection_csv', methods=['POST'])
+@login_required
+def export_selection_documents_csv():
+    doc_ids = [int(x) for x in request.form.getlist('doc_ids') if x.isdigit()]
+    if not doc_ids:
+        return redirect(url_for('documents'))
+    db = get_db()
+    ph = ','.join('?' * len(doc_ids))
+    rows = _rows_to_list(db.execute(
+        f"SELECT d.*, COALESCE(NULLIF(c.company_name,''), c.name) AS client_name"
+        f" FROM documents d LEFT JOIN clients c ON d.client_id = c.id"
+        f" WHERE d.id IN ({ph}) AND d.user_id=?",
+        [*doc_ids, current_user.id],
+    ).fetchall())
+    db.close()
+    fields = ['doc_number', 'doc_type', 'invoice_type', 'client_name',
+              'date_issued', 'currency', 'subtotal', 'discount', 'tax_amount',
+              'amount_due', 'paid_amount', 'status', 'pay_by_date', 'notes']
+    output = io.StringIO()
+    w = csv.DictWriter(output, fieldnames=fields, extrasaction='ignore')
+    w.writeheader()
+    for row in rows:
+        w.writerow({k: row.get(k) or '' for k in fields})
+    buf = io.BytesIO(output.getvalue().encode())
+    buf.seek(0)
+    return send_file(buf, mimetype='text/csv', as_attachment=True,
+                     download_name=f"documents_{date.today().isoformat()}.csv")
 
 
 @app.route('/documents/export_selection', methods=['POST'])

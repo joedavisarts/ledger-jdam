@@ -96,8 +96,11 @@
 <p class="empty-state">No clients yet.</p>
 {% endif %}
 
-<!-- Hidden export form -->
+<!-- Hidden export forms (selection bar) -->
 <form id="export-form" method="POST" action="{{ url_for('export_selection_clients') }}" style="display:none;"></form>
+<!-- Hidden export forms (modal — target="_blank" so modal stays open) -->
+<form id="modal-export-csv-form"   method="POST" action="{{ url_for('export_selection_clients_csv') }}" target="_blank" style="display:none;"></form>
+<form id="modal-export-quilk-form" method="POST" action="{{ url_for('export_selection_clients') }}"     target="_blank" style="display:none;"></form>
 
 <!-- 3-step bulk delete modal -->
 <div class="modal-overlay hidden" id="bulk-delete-modal" role="dialog" aria-modal="true">
@@ -107,26 +110,32 @@
       <button type="button" class="modal-close" onclick="closeBulkDeleteModal()" aria-label="Close">&times;</button>
     </div>
 
-    <!-- Step 1: count + names -->
+    <!-- Step 1: consequences -->
     <div id="del-step-1" style="padding:24px 28px 20px;">
-      <p id="del-step1-msg" style="margin-bottom:10px;"></p>
-      <div id="del-names-list"
-           style="max-height:160px;overflow-y:auto;margin-bottom:16px;font-size:13px;color:var(--text-muted);border:1px solid var(--border);border-radius:6px;padding:8px 12px;"></div>
+      <div style="padding:14px 16px;border-radius:8px;background:rgba(220,50,50,0.1);border:1px solid rgba(220,50,50,0.25);margin-bottom:18px;">
+        <p style="font-weight:600;color:#e05;margin-bottom:6px;">This cannot be undone.</p>
+        <p id="del-step1-detail" style="font-size:13.5px;line-height:1.5;"></p>
+      </div>
       <div class="form-actions">
         <button type="button" class="btn btn-outline" onclick="closeBulkDeleteModal()">Cancel</button>
         <button type="button" class="btn btn-danger" onclick="goDelStep(2)">Continue →</button>
       </div>
     </div>
 
-    <!-- Step 2: consequence warning -->
+    <!-- Step 2: export offer -->
     <div id="del-step-2" class="hidden" style="padding:24px 28px 20px;">
-      <div style="padding:14px 16px;border-radius:8px;background:rgba(220,50,50,0.1);border:1px solid rgba(220,50,50,0.25);margin-bottom:18px;">
-        <p style="font-weight:600;color:#e05;margin-bottom:6px;">This cannot be undone.</p>
-        <p id="del-step2-detail" style="font-size:13.5px;line-height:1.5;"></p>
+      <p id="del-step2-msg" style="margin-bottom:16px;font-size:14px;"></p>
+      <div style="display:flex;gap:10px;margin-bottom:10px;">
+        <button type="button" class="btn btn-outline" onclick="modalExportCSV()">↓ Download CSV</button>
+        <button type="button" class="btn btn-outline" onclick="modalExportQuilk()">↓ Download .quilk</button>
       </div>
-      <div class="form-actions">
+      <p id="del-export-done" class="hidden"
+         style="font-size:12.5px;color:var(--gold);margin-top:2px;">
+        ✓ Download started — continue when ready.
+      </p>
+      <div class="form-actions" style="margin-top:18px;">
         <button type="button" class="btn btn-outline" onclick="goDelStep(1)">← Back</button>
-        <button type="button" class="btn btn-danger" onclick="goDelStep(3)">I Understand, Proceed →</button>
+        <button type="button" id="del-skip-btn" class="btn btn-danger" onclick="goDelStep(3)">Skip →</button>
       </div>
     </div>
 
@@ -354,35 +363,32 @@ function exportSelected() {
 }
 
 // ---- 3-step bulk delete ----
+let _delModalTitle = '';
+
 function openBulkDeleteModal() {
   if (!selectedIds.size) return;
   const count = selectedIds.size;
   const label = count === 1 ? 'Client' : 'Clients';
-  document.getElementById('del-modal-title').textContent = `Delete ${count} ${label}?`;
-  document.getElementById('del-step1-msg').textContent =
-    `You have selected ${count} ${label.toLowerCase()} to permanently delete:`;
+  _delModalTitle = `Delete ${count} ${label}?`;
+  document.getElementById('del-modal-title').textContent = _delModalTitle;
 
-  // Build name list from visible rows or cards
-  const names = [];
-  selectedIds.forEach(id => {
-    const cb = document.querySelector(`.item-checkbox[value="${id}"]`);
-    if (cb) {
-      const strong = cb.closest('tr')?.querySelector('.strong');
-      if (strong) { names.push(strong.textContent.trim()); return; }
-    }
-    const card = document.querySelector(`.card-item[data-id="${id}"]`);
-    if (card) names.push(card.querySelector('.card-name')?.textContent.trim() || `#${id}`);
-  });
-  document.getElementById('del-names-list').innerHTML =
-    names.map(n => `<div style="padding:3px 0;">• ${n}</div>`).join('');
-
-  document.getElementById('del-step2-detail').textContent =
+  document.getElementById('del-step1-detail').textContent =
     `${count} ${label.toLowerCase()} will be permanently removed. ` +
     `Documents linked to these clients will have their client association cleared. ` +
     `This action cannot be reversed.`;
+
+  document.getElementById('del-step2-msg').textContent =
+    `Optionally export a backup of ${count > 1 ? 'these ' + count + ' clients' : 'this client'} ` +
+    `before deleting. Downloads open in the background — continue when ready.`;
+
   document.getElementById('del-confirm-count').textContent = `${count} ${label}`;
   document.getElementById('del-confirm-input').value = '';
   updateDelConfirmBtn();
+
+  // Reset step 2 state
+  document.getElementById('del-export-done').classList.add('hidden');
+  document.getElementById('del-skip-btn').textContent = 'Skip →';
+
   goDelStep(1);
   document.getElementById('bulk-delete-modal').classList.remove('hidden');
 }
@@ -395,7 +401,32 @@ function goDelStep(n) {
   [1, 2, 3].forEach(i =>
     document.getElementById(`del-step-${i}`).classList.toggle('hidden', i !== n)
   );
+  if (n === 2) document.getElementById('del-modal-title').textContent = 'Export before deleting?';
+  else document.getElementById('del-modal-title').textContent = _delModalTitle;
   if (n === 3) setTimeout(() => document.getElementById('del-confirm-input').focus(), 50);
+}
+
+function _injectModalIds(form, fieldName) {
+  form.querySelectorAll(`input[name="${fieldName}"]`).forEach(i => i.remove());
+  selectedIds.forEach(id => {
+    const inp = document.createElement('input');
+    inp.type = 'hidden'; inp.name = fieldName; inp.value = id;
+    form.appendChild(inp);
+  });
+}
+
+function modalExportCSV() {
+  _injectModalIds(document.getElementById('modal-export-csv-form'), 'client_ids');
+  document.getElementById('modal-export-csv-form').submit();
+  document.getElementById('del-export-done').classList.remove('hidden');
+  document.getElementById('del-skip-btn').textContent = 'Continue →';
+}
+
+function modalExportQuilk() {
+  _injectModalIds(document.getElementById('modal-export-quilk-form'), 'client_ids');
+  document.getElementById('modal-export-quilk-form').submit();
+  document.getElementById('del-export-done').classList.remove('hidden');
+  document.getElementById('del-skip-btn').textContent = 'Continue →';
 }
 
 function updateDelConfirmBtn() {
@@ -405,7 +436,6 @@ function updateDelConfirmBtn() {
 
 function executeBulkDelete() {
   const form = document.getElementById('bulk-form');
-  // Uncheck all checkboxes; inject hidden inputs for selected IDs
   form.querySelectorAll('input[name="client_ids"]').forEach(i => {
     if (i.type === 'checkbox') i.checked = false;
     else i.remove();
