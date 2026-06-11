@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Send {{ doc.doc_number }} — Quilk{% endblock %}
+{% block title %}{% if is_reminder %}Send Reminder{% else %}Send{% endif %} {{ doc.doc_number }} — Quilk{% endblock %}
 {% block content %}
 <div class="page-header">
   <div>
-    <h1>Send to Client</h1>
+    <h1>{% if is_reminder %}Send Reminder{% else %}Send to Client{% endif %}</h1>
     <span class="page-sub">
       <span class="badge badge-{{ doc.doc_type }}">{{ doc.doc_type }}</span>
       &nbsp;{{ doc.doc_number }}
@@ -15,7 +15,7 @@
 <div class="flash flash-error">Failed to send: {{ error }}</div>
 {% endif %}
 
-<form method="POST" action="{{ url_for('send_document', doc_id=doc.id) }}">
+<form method="POST" action="{{ url_for('remind_document' if is_reminder else 'send_document', doc_id=doc.id) }}">
 
   <div class="form-grid">
     <div class="form-card">
@@ -52,7 +52,7 @@
         <div style="display:flex;align-items:center;gap:10px;">
           <button type="button" id="save-template-btn"
             style="font-size:12px;padding:5px 12px;background:transparent;border:1px solid var(--border,#444);color:var(--text-dim,#888);border-radius:4px;cursor:pointer;">
-            Save as default
+            Set as default template
           </button>
           <span id="save-template-feedback" style="font-size:12px;color:var(--gold,#DAB322);opacity:0;transition:opacity 0.4s;"></span>
         </div>
@@ -76,12 +76,14 @@
 
   <div class="form-actions">
     <a href="{{ url_for('document_view', doc_id=doc.id) }}" class="btn btn-outline">Cancel</a>
-    <button type="submit" class="btn btn-gold">Send Email</button>
+    <button type="submit" class="btn btn-gold">{% if is_reminder %}Send Reminder{% else %}Send Email{% endif %}</button>
   </div>
 
 </form>
 
 <script>
+const IS_REMINDER = {{ 'true' if is_reminder else 'false' }};
+
 function insertToken(token) {
   const ta = document.getElementById('body-textarea');
   const start = ta.selectionStart;
@@ -99,12 +101,13 @@ document.getElementById('save-template-btn').addEventListener('click', function(
   fetch('{{ url_for("save_email_template", doc_id=doc.id) }}', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({subject_template: subject, body_template: body}),
+    body: JSON.stringify({subject_template: subject, body_template: body, is_reminder: IS_REMINDER}),
   })
   .then(r => r.json())
   .then(data => {
     if (data.ok) {
-      feedback.textContent = 'Saved as default.';
+      feedback.textContent = 'Saved as default template.';
+      feedback.style.color = 'var(--gold,#DAB322)';
     } else {
       feedback.textContent = 'Save failed: ' + (data.error || 'unknown error');
       feedback.style.color = '#e55';

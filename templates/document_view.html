@@ -24,6 +24,9 @@
     <a href="{{ url_for('document_pdf', doc_id=doc.id) }}" target="_blank" class="btn btn-outline">Preview PDF</a>
     <a href="{{ url_for('document_pdf', doc_id=doc.id) }}?download=1" class="btn btn-outline">Download PDF</a>
     <a href="{{ url_for('send_document', doc_id=doc.id) }}" class="btn btn-outline">Send to Client</a>
+    {% if is_overdue %}
+    <a href="{{ url_for('remind_document', doc_id=doc.id) }}" class="btn btn-warn">Send Reminder</a>
+    {% endif %}
     <form method="POST" action="{{ url_for('delete_document', doc_id=doc.id) }}" style="display:inline" onsubmit="return confirm('Delete this document? This cannot be undone.')">
       <button type="submit" class="btn btn-danger">Delete</button>
     </form>

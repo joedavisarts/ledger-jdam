@@ -544,6 +544,18 @@ def _doc_subject(doc_type, user):
     }[doc_type]
 
 
+def _is_overdue(doc):
+    if doc.get('doc_type') == 'receipt' or doc.get('status') == 'paid':
+        return False
+    pay_by = doc.get('pay_by_date')
+    if not pay_by:
+        return False
+    try:
+        return date.fromisoformat(str(pay_by)) < date.today()
+    except (ValueError, TypeError):
+        return False
+
+
 def _default_email_templates():
     return {
         'invoice': {
@@ -569,6 +581,34 @@ def _default_email_templates():
                 'Greetings,\n\n'
                 'Please find your receipt attached, document number {DOCNUMBER}, for your records.\n\n'
                 'It has been a pleasure. Kindly confirm receipt of this email, and feel free to reply directly with any questions.'
+            ),
+        },
+    }
+
+
+def _default_reminder_templates():
+    return {
+        'invoice_reminder': {
+            'subject_template': 'Reminder: Invoice {DOCNUMBER} is overdue — {YOURBUSINESSNAME}',
+            'body_template': (
+                'Greetings,\n\n'
+                'This is a friendly reminder that invoice {DOCNUMBER} for {AMOUNT}, '
+                'due on {DUEDATE}, is now overdue.\n\n'
+                'Please arrange payment as soon as possible to avoid any disruption. '
+                'If you have already made payment, kindly disregard this notice and '
+                'reply to let us know.\n\n'
+                'Thank you for your prompt attention to this matter.'
+            ),
+        },
+        'quote_reminder': {
+            'subject_template': 'Reminder: Quote {DOCNUMBER} is awaiting your response — {YOURBUSINESSNAME}',
+            'body_template': (
+                'Greetings,\n\n'
+                'This is a gentle reminder regarding quote {DOCNUMBER} for {AMOUNT}, '
+                'which is now past its review date of {DUEDATE}.\n\n'
+                'Please let us know at your earliest convenience whether you wish to '
+                'proceed, so we can arrange the next steps.\n\n'
+                'Feel free to reply directly with any questions.'
             ),
         },
     }
@@ -1043,6 +1083,7 @@ def documents():
     for row in rows:
         if row.get('client_id'):
             row['client_name'] = labels.get(row['client_id'], row.get('client_name'))
+        row['is_overdue'] = _is_overdue(row)
     db.close()
     return render_template('documents.html', documents=rows,
                            filter_type=doc_type, filter_status=status)
@@ -1078,7 +1119,8 @@ def document_view(doc_id):
     )
     db.close()
     return render_template('document_view.html', doc=doc, client=client,
-                           sent_logs=sent_logs, linked_doc=linked_doc)
+                           sent_logs=sent_logs, linked_doc=linked_doc,
+                           is_overdue=_is_overdue(doc))
 
 
 @app.route('/documents/<int:doc_id>/pdf')
@@ -1379,6 +1421,105 @@ def send_document(doc_id):
                                error=str(e))
 
 
+@app.route('/documents/<int:doc_id>/remind', methods=['GET', 'POST'])
+def remind_document(doc_id):
+    db = get_db()
+    doc = _row_to_dict(
+        db.execute(
+            "SELECT * FROM documents WHERE id=? AND user_id=?",
+            (doc_id, current_user.id),
+        ).fetchone()
+    )
+    if not doc:
+        db.close()
+        abort(404)
+    if doc.get('doc_type') == 'receipt' or not _is_overdue(doc):
+        db.close()
+        abort(403)
+    doc['line_items'] = _parse_line_items(doc['line_items'])
+    client = _row_to_dict(
+        db.execute("SELECT * FROM clients WHERE id=?",
+                   (doc['client_id'],)).fetchone()
+    ) or {}
+    tpl_key = doc['doc_type'] + '_reminder'
+    tpl_row = _row_to_dict(
+        db.execute(
+            "SELECT subject_template, body_template FROM email_templates WHERE user_id=? AND doc_type=?",
+            (current_user.id, tpl_key),
+        ).fetchone()
+    )
+    db.close()
+
+    user_dict = current_user.to_dict()
+    first_name = (client.get('name') or '').split()[0] if client.get('name') else 'there'
+    defaults = _default_reminder_templates()[tpl_key]
+    subject_tpl = (tpl_row or {}).get('subject_template') or defaults['subject_template']
+    body_tpl = (tpl_row or {}).get('body_template') or defaults['body_template']
+    pdf_filename = _pdf_email_filename(doc['doc_number'])
+    to_email = client.get('email', '')
+
+    if request.method == 'GET':
+        return render_template('send_email.html',
+                               doc=doc, client=client,
+                               subject_tpl=subject_tpl, body_tpl=body_tpl,
+                               pdf_filename=pdf_filename,
+                               to_email=to_email,
+                               is_reminder=True,
+                               error=None)
+
+    to_email = request.form.get('to_email', '').strip()
+    subject_raw = request.form.get('subject', subject_tpl).strip()
+    body_raw = request.form.get('body_text', body_tpl).strip()
+    subject = _resolve_placeholders(subject_raw, doc, client, user_dict)
+    body_text = _resolve_placeholders(body_raw, doc, client, user_dict)
+    logo_path = os.path.join(ASSETS_DIR, current_user.logo_filename or 'logo.png')
+
+    db = get_db()
+    try:
+        pdf_bytes = generate_pdf(doc, client, user_dict)
+        html_body, plain_text = build_html_email(
+            first_name, doc['doc_number'], doc['doc_type'], logo_path, user_dict,
+            body_text=body_text,
+        )
+        msg = _build_mime_message(
+            to_email, subject, html_body, plain_text,
+            pdf_bytes, pdf_filename, logo_path, user_dict,
+        )
+
+        gmail = _get_gmail_service()
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+        gmail.users().messages().send(userId='me', body={'raw': raw}).execute()
+
+        db.execute(
+            "INSERT INTO sent_log (doc_id,recipient_email,subject,status) VALUES (?,?,?,?)",
+            (doc_id, to_email, subject, 'sent'),
+        )
+        db.commit()
+        db.close()
+
+        flash(
+            f'Reminder sent to {to_email} on {datetime.now().strftime("%B %d, %Y at %H:%M")}.',
+            'success',
+        )
+        return redirect(url_for('document_view', doc_id=doc_id))
+
+    except Exception as e:
+        db.execute(
+            "INSERT INTO sent_log (doc_id,recipient_email,subject,status,error_message) VALUES (?,?,?,?,?)",
+            (doc_id, to_email, subject_raw, 'failed', str(e)),
+        )
+        db.commit()
+        db.close()
+
+        return render_template('send_email.html',
+                               doc=doc, client=client,
+                               subject_tpl=subject_raw, body_tpl=body_raw,
+                               pdf_filename=pdf_filename,
+                               to_email=to_email,
+                               is_reminder=True,
+                               error=str(e))
+
+
 @app.route('/documents/<int:doc_id>/save_email_template', methods=['POST'])
 def save_email_template(doc_id):
     db = get_db()
@@ -1397,13 +1538,14 @@ def save_email_template(doc_id):
         db.close()
         return jsonify({'ok': False, 'error': 'Missing fields'}), 400
 
+    tpl_key = row['doc_type'] + ('_reminder' if data.get('is_reminder') else '')
     db.execute(
         """INSERT INTO email_templates (user_id, doc_type, subject_template, body_template)
            VALUES (?, ?, ?, ?)
            ON CONFLICT(user_id, doc_type) DO UPDATE SET
                subject_template = excluded.subject_template,
                body_template    = excluded.body_template""",
-        (current_user.id, row['doc_type'], subject_template, body_template),
+        (current_user.id, tpl_key, subject_template, body_template),
     )
     db.commit()
     db.close()
