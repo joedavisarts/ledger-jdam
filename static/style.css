@@ -897,6 +897,19 @@ a:hover { text-decoration: underline; }
 }
 
 /* ===== SEND EMAIL PAGE ===== */
+.token-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: monospace;
+  color: var(--text-muted);
+  transition: border-color 0.12s, color 0.12s;
+}
+.token-chip:hover { border-color: var(--gold); color: var(--gold); }
+
 .email-preview {
   background: var(--surface);
   border: 1px solid var(--border);
