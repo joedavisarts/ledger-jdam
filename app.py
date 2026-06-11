@@ -547,27 +547,27 @@ def _doc_subject(doc_type, user):
 def _default_email_templates():
     return {
         'invoice': {
-            'subject_template': 'Confidential: Invoice {{###DOCNUMBER###}} - {{###YOURBUSINESSNAME###}}',
+            'subject_template': 'Confidential: Invoice {DOCNUMBER} - {YOURBUSINESSNAME}',
             'body_template': (
                 'Greetings,\n\n'
-                'Please find your invoice attached, document number {{###DOCNUMBER###}}, for your records.\n\n'
+                'Please find your invoice attached, document number {DOCNUMBER}, for your records.\n\n'
                 'Kindly confirm receipt of this email, and please reply directly with any questions.'
             ),
         },
         'quote': {
-            'subject_template': 'Confidential: Quote {{###DOCNUMBER###}} - {{###YOURBUSINESSNAME###}}',
+            'subject_template': 'Confidential: Quote {DOCNUMBER} - {YOURBUSINESSNAME}',
             'body_template': (
                 'Greetings,\n\n'
-                'Please find your quote attached, document number {{###DOCNUMBER###}}, for your records. '
+                'Please find your quote attached, document number {DOCNUMBER}, for your records. '
                 'This quote is valid for two weeks from the date of issue.\n\n'
                 'Kindly confirm receipt of this email, and please reply directly with any questions.'
             ),
         },
         'receipt': {
-            'subject_template': 'Important: Receipt {{###DOCNUMBER###}} - {{###YOURBUSINESSNAME###}}',
+            'subject_template': 'Important: Receipt {DOCNUMBER} - {YOURBUSINESSNAME}',
             'body_template': (
                 'Greetings,\n\n'
-                'Please find your receipt attached, document number {{###DOCNUMBER###}}, for your records.\n\n'
+                'Please find your receipt attached, document number {DOCNUMBER}, for your records.\n\n'
                 'It has been a pleasure. Kindly confirm receipt of this email, and feel free to reply directly with any questions.'
             ),
         },
@@ -583,16 +583,17 @@ def _resolve_placeholders(text, doc, client, user):
         raw_amount = doc.get('amount_due') or 0
     amount_str = f"{currency} {raw_amount:,.2f}"
     due_date = doc.get('pay_by_date') or ''
-    replacements = {
-        '{{###DOCNUMBER###}}':         doc.get('doc_number', ''),
-        '{{###CLIENTNAME###}}':        display_name,
-        '{{###AMOUNT###}}':            amount_str,
-        '{{###DUEDATE###}}':           due_date,
-        '{{###YOURBUSINESSNAME###}}':  user.get('business_name', ''),
-        '{{###CLIENTBUSINESSNAME###}}': client.get('company_name', ''),
+    tokens = {
+        'DOCNUMBER':          doc.get('doc_number', ''),
+        'CLIENTNAME':         display_name,
+        'AMOUNT':             amount_str,
+        'DUEDATE':            due_date,
+        'YOURBUSINESSNAME':   user.get('business_name', ''),
+        'CLIENTBUSINESSNAME': client.get('company_name', ''),
     }
-    for token, value in replacements.items():
-        text = text.replace(token, str(value))
+    for key, value in tokens.items():
+        text = text.replace('{{###' + key + '###}}', str(value))  # legacy format
+        text = text.replace('{' + key + '}', str(value))          # current format
     return text
 
 
