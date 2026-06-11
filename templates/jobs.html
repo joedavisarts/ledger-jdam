@@ -3,59 +3,114 @@
 {% block content %}
 <div class="page-header">
   <h1>Jobs</h1>
+  <div class="header-actions">
+    <div class="view-toggle">
+      <button class="view-toggle-btn {% if view_pref == 'list' %}active{% endif %}"
+              data-mode="list" onclick="setView('list')" title="List view" type="button">
+        <svg viewBox="0 0 24 24"><path d="M3 14h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V8H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 8v2h14V8H7z"/></svg>
+      </button>
+      <button class="view-toggle-btn {% if view_pref == 'grid' %}active{% endif %}"
+              data-mode="grid" onclick="setView('grid')" title="Grid view" type="button">
+        <svg viewBox="0 0 24 24"><path d="M3 3v8h8V3H3zm6 6H5V5h4v4zm-6 4v8h8v-8H3zm6 6H5v-4h4v4zm4-16v8h8V3h-8zm6 6h-4V5h4v4zm-6 4v8h8v-8h-8zm6 6h-4v-4h4v4z"/></svg>
+      </button>
+    </div>
+  </div>
 </div>
 
 {% if jobs %}
-<table class="data-table">
-  <thead>
-    <tr>
-      <th>Client</th>
-      <th>Documents</th>
-      <th style="text-align:right;">Project Total</th>
-      <th style="text-align:right;">Billed</th>
-      <th style="text-align:right;">Paid</th>
-      <th style="text-align:right;">Outstanding</th>
-      <th></th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for job in jobs %}
-    <tr class="clickable" onclick="window.location='{{ url_for('job_detail', job_id=job.job_id) }}'">
-      <td class="strong">
-        <a href="{{ url_for('job_detail', job_id=job.job_id) }}"
-           style="color:var(--text);text-decoration:none;">
-          {{ job.client_name or '—' }}
-        </a>
-      </td>
-      <td style="color:var(--text-muted);font-size:13px;">{{ job.type_summary }}</td>
-      {% if job.overview %}
-      <td style="text-align:right;font-variant-numeric:tabular-nums;">
-        {{ job.overview.currency }} {{ job.overview.project_total | format_currency }}
-      </td>
-      <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--text-muted);">
-        {{ job.overview.currency }} {{ job.overview.amount_billed | format_currency }}
-      </td>
-      <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--text-muted);">
-        {{ job.overview.currency }} {{ job.overview.amount_paid | format_currency }}
-      </td>
-      <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600;">
-        {{ job.overview.currency }} {{ job.overview.balance_outstanding | format_currency }}
-      </td>
-      {% else %}
-      <td colspan="4" style="color:var(--text-dim);font-size:13px;">—</td>
-      {% endif %}
-      <td style="white-space:nowrap;">
-        {% if job.has_overdue %}
-        <span class="status status-overdue" style="font-size:11.5px;padding:1px 7px;">overdue</span>
-        {% endif %}
-        {% if job.has_voided %}
-        <span class="status status-voided" style="font-size:11.5px;padding:1px 7px;">void</span>
-        {% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+<div id="view-container" data-view="{{ view_pref or 'list' }}">
+
+  {# ---- List view ---- #}
+  <div class="view-list">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Client</th>
+          <th>Documents</th>
+          <th style="text-align:right;">Project Total</th>
+          <th style="text-align:right;">Billed</th>
+          <th style="text-align:right;">Paid</th>
+          <th style="text-align:right;">Outstanding</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in jobs %}
+        <tr class="clickable" onclick="window.location='{{ url_for('job_detail', job_id=job.job_id) }}'">
+          <td class="strong">
+            <a href="{{ url_for('job_detail', job_id=job.job_id) }}"
+               style="color:var(--text);text-decoration:none;">
+              {{ job.client_name or '—' }}
+            </a>
+          </td>
+          <td style="color:var(--text-muted);font-size:13px;">{{ job.type_summary }}</td>
+          {% if job.overview %}
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">
+            {{ job.overview.currency }} {{ job.overview.project_total | format_currency }}
+          </td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--text-muted);">
+            {{ job.overview.currency }} {{ job.overview.amount_billed | format_currency }}
+          </td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--text-muted);">
+            {{ job.overview.currency }} {{ job.overview.amount_paid | format_currency }}
+          </td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600;">
+            {{ job.overview.currency }} {{ job.overview.balance_outstanding | format_currency }}
+          </td>
+          {% else %}
+          <td colspan="4" style="color:var(--text-dim);font-size:13px;">—</td>
+          {% endif %}
+          <td style="white-space:nowrap;">
+            {% if job.has_overdue %}
+            <span class="status status-overdue" style="font-size:11.5px;padding:1px 7px;">overdue</span>
+            {% endif %}
+            {% if job.has_voided %}
+            <span class="status status-voided" style="font-size:11.5px;padding:1px 7px;">void</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {# ---- Grid view ---- #}
+  <div class="view-grid">
+    <div class="card-grid">
+      {% for job in jobs %}
+      <a href="{{ url_for('job_detail', job_id=job.job_id) }}" style="text-decoration:none;color:inherit;">
+      <div class="card-item" style="cursor:pointer;">
+        <div class="card-name">{{ job.client_name or '—' }}</div>
+        <div class="card-meta">
+          <span>{{ job.type_summary }}</span>
+          {% if job.overview %}
+          <span style="font-variant-numeric:tabular-nums;">
+            {{ job.overview.currency }} {{ job.overview.project_total | format_currency }} total
+          </span>
+          {% endif %}
+        </div>
+        <div class="card-footer">
+          <div>
+            {% if job.has_overdue %}
+            <span class="status status-overdue" style="font-size:11px;padding:1px 6px;">overdue</span>
+            {% endif %}
+            {% if job.has_voided %}
+            <span class="status status-voided" style="font-size:11px;padding:1px 6px;">void</span>
+            {% endif %}
+          </div>
+          {% if job.overview %}
+          <span style="font-weight:600;font-variant-numeric:tabular-nums;font-size:13px;">
+            {{ job.overview.currency }} {{ job.overview.balance_outstanding | format_currency }} due
+          </span>
+          {% endif %}
+        </div>
+      </div>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+
+</div>
 {% else %}
 <div class="empty-state">
   <p>No jobs yet.</p>
@@ -64,4 +119,22 @@
   </p>
 </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const viewContainer = document.getElementById('view-container');
+function setView(mode) {
+  if (!viewContainer) return;
+  viewContainer.dataset.view = mode;
+  document.querySelectorAll('.view-toggle-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+  fetch('/api/view_pref', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({section: 'jobs', mode}),
+  });
+}
+</script>
 {% endblock %}

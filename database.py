@@ -151,6 +151,9 @@ def init_db():
     _add_col('documents', 'invoice_type', 'TEXT')
     _add_col('documents', 'voided', 'INTEGER NOT NULL DEFAULT 0')
     _add_col('documents', 'void_reason', 'TEXT')
+    _add_col('users', 'view_pref_clients',   "TEXT NOT NULL DEFAULT 'list'")
+    _add_col('users', 'view_pref_documents', "TEXT NOT NULL DEFAULT 'list'")
+    _add_col('users', 'view_pref_jobs',      "TEXT NOT NULL DEFAULT 'list'")
 
     c.execute("UPDATE documents SET status='pending' WHERE status IN ('draft', 'issued')")
 

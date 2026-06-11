@@ -894,8 +894,12 @@ def clients():
     labels = _client_display_labels(db, current_user.id)
     for r in rows:
         r['display_name'] = labels.get(r['id'], r['display_name'])
+    user_row = db.execute(
+        "SELECT view_pref_clients FROM users WHERE id=?", (current_user.id,)
+    ).fetchone()
+    view_pref = (user_row['view_pref_clients'] if user_row else None) or 'list'
     db.close()
-    return render_template('clients.html', clients=rows)
+    return render_template('clients.html', clients=rows, view_pref=view_pref)
 
 
 @app.route('/clients/import', methods=['POST'])
@@ -1128,7 +1132,13 @@ def jobs():
         })
 
     job_list.sort(key=lambda j: j['latest'], reverse=True)
-    return render_template('jobs.html', jobs=job_list)
+    db2 = get_db()
+    user_row = db2.execute(
+        "SELECT view_pref_jobs FROM users WHERE id=?", (current_user.id,)
+    ).fetchone()
+    view_pref = (user_row['view_pref_jobs'] if user_row else None) or 'list'
+    db2.close()
+    return render_template('jobs.html', jobs=job_list, view_pref=view_pref)
 
 
 @app.route('/jobs/<job_id>')
@@ -1200,9 +1210,14 @@ def documents():
         if row.get('client_id'):
             row['client_name'] = labels.get(row['client_id'], row.get('client_name'))
         row['is_overdue'] = _is_overdue(row)
+    user_row = db.execute(
+        "SELECT view_pref_documents FROM users WHERE id=?", (current_user.id,)
+    ).fetchone()
+    view_pref = (user_row['view_pref_documents'] if user_row else None) or 'list'
     db.close()
     return render_template('documents.html', documents=rows,
-                           filter_type=doc_type, filter_status=status)
+                           filter_type=doc_type, filter_status=status,
+                           view_pref=view_pref)
 
 
 def _job_capabilities(job_docs, anchor_id):
@@ -1910,6 +1925,100 @@ def save_email_template(doc_id):
     db.commit()
     db.close()
     return jsonify({'ok': True})
+
+
+# ---------------------------------------------------------------------------
+# View preference + export-selection APIs
+# ---------------------------------------------------------------------------
+
+@app.route('/api/view_pref', methods=['POST'])
+@login_required
+def api_view_pref():
+    data = request.get_json(silent=True) or {}
+    section = data.get('section')
+    mode = data.get('mode')
+    if section not in ('clients', 'documents', 'jobs') or mode not in ('list', 'grid'):
+        return jsonify({'error': 'invalid'}), 400
+    col = f'view_pref_{section}'
+    db = get_db()
+    db.execute(f"UPDATE users SET {col}=? WHERE id=?", (mode, current_user.id))
+    db.commit()
+    db.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/clients/export_selection', methods=['POST'])
+@login_required
+def export_selection_clients():
+    client_ids = [int(x) for x in request.form.getlist('client_ids') if x.isdigit()]
+    if not client_ids:
+        return redirect(url_for('clients'))
+    db = get_db()
+    ph = ','.join('?' * len(client_ids))
+    clients_rows = _rows_to_list(db.execute(
+        f"SELECT * FROM clients WHERE id IN ({ph}) AND user_id=?",
+        [*client_ids, current_user.id],
+    ).fetchall())
+    docs_rows = _rows_to_list(db.execute(
+        f"SELECT * FROM documents WHERE client_id IN ({ph}) AND user_id=?",
+        [*client_ids, current_user.id],
+    ).fetchall())
+    db.close()
+    jobs_map = defaultdict(list)
+    for d in docs_rows:
+        if d.get('job_id'):
+            jobs_map[d['job_id']].append(d['id'])
+    payload = {
+        'quilk_export': '1.0',
+        'exported_at': datetime.utcnow().isoformat() + 'Z',
+        'clients': clients_rows,
+        'documents': docs_rows,
+        'jobs': [{'job_id': jid, 'doc_ids': dids} for jid, dids in jobs_map.items()],
+    }
+    buf = io.BytesIO(json.dumps(payload, indent=2, default=str).encode())
+    buf.seek(0)
+    filename = f"quilk_clients_{date.today().isoformat()}.quilk"
+    return send_file(buf, mimetype='application/json',
+                     as_attachment=True, download_name=filename)
+
+
+@app.route('/documents/export_selection', methods=['POST'])
+@login_required
+def export_selection_documents():
+    doc_ids = [int(x) for x in request.form.getlist('doc_ids') if x.isdigit()]
+    if not doc_ids:
+        return redirect(url_for('documents'))
+    db = get_db()
+    ph = ','.join('?' * len(doc_ids))
+    docs_rows = _rows_to_list(db.execute(
+        f"SELECT * FROM documents WHERE id IN ({ph}) AND user_id=?",
+        [*doc_ids, current_user.id],
+    ).fetchall())
+    client_ids = list({d['client_id'] for d in docs_rows if d.get('client_id')})
+    clients_rows = []
+    if client_ids:
+        cph = ','.join('?' * len(client_ids))
+        clients_rows = _rows_to_list(db.execute(
+            f"SELECT * FROM clients WHERE id IN ({cph}) AND user_id=?",
+            [*client_ids, current_user.id],
+        ).fetchall())
+    db.close()
+    jobs_map = defaultdict(list)
+    for d in docs_rows:
+        if d.get('job_id'):
+            jobs_map[d['job_id']].append(d['id'])
+    payload = {
+        'quilk_export': '1.0',
+        'exported_at': datetime.utcnow().isoformat() + 'Z',
+        'clients': clients_rows,
+        'documents': docs_rows,
+        'jobs': [{'job_id': jid, 'doc_ids': dids} for jid, dids in jobs_map.items()],
+    }
+    buf = io.BytesIO(json.dumps(payload, indent=2, default=str).encode())
+    buf.seek(0)
+    filename = f"quilk_documents_{date.today().isoformat()}.quilk"
+    return send_file(buf, mimetype='application/json',
+                     as_attachment=True, download_name=filename)
 
 
 # ---------------------------------------------------------------------------

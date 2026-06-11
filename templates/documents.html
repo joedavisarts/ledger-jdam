@@ -4,7 +4,16 @@
 <div class="page-header">
   <h1>Documents</h1>
   <div class="header-actions">
-    <button id="bulk-delete-btn" class="btn btn-danger hidden" type="button" onclick="bulkDelete()">Delete Selected</button>
+    <div class="view-toggle">
+      <button class="view-toggle-btn {% if view_pref == 'list' %}active{% endif %}"
+              data-mode="list" onclick="setView('list')" title="List view" type="button">
+        <svg viewBox="0 0 24 24"><path d="M3 14h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V8H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 8v2h14V8H7z"/></svg>
+      </button>
+      <button class="view-toggle-btn {% if view_pref == 'grid' %}active{% endif %}"
+              data-mode="grid" onclick="setView('grid')" title="Grid view" type="button">
+        <svg viewBox="0 0 24 24"><path d="M3 3v8h8V3H3zm6 6H5V5h4v4zm-6 4v8h8v-8H3zm6 6H5v-4h4v4zm4-16v8h8V3h-8zm6 6h-4V5h4v4zm-6 4v8h8v-8h-8zm6 6h-4v-4h4v4z"/></svg>
+      </button>
+    </div>
     <a href="{{ url_for('export_csv') }}" class="btn btn-outline">Export CSV</a>
   </div>
 </div>
@@ -25,82 +34,311 @@
   </select>
 </form>
 
+<!-- Selection bar -->
+<div class="selection-bar hidden" id="selection-bar">
+  <span class="sel-count" id="sel-count">0 selected</span>
+  <button type="button" class="btn btn-xs btn-outline" onclick="clearSelection()">Clear</button>
+  <button type="button" class="btn btn-xs btn-outline" onclick="exportSelected()">Export .quilk</button>
+  <button type="button" class="btn btn-xs btn-danger" onclick="openBulkDeleteModal()">Delete Selected</button>
+</div>
+
 {% if documents %}
-<form id="bulk-form" method="POST" action="{{ url_for('bulk_delete_documents') }}">
-<table class="data-table">
-  <thead>
-    <tr>
-      <th style="width:36px;"><input type="checkbox" id="select-all" title="Select all" style="accent-color:var(--gold);cursor:pointer;"></th>
-      <th>Open</th>
-      <th>Save</th>
-      <th>Number</th>
-      <th>Type</th>
-      <th>Client</th>
-      <th>Date</th>
-      <th style="white-space:nowrap;">Currency</th>
-      <th style="white-space:nowrap;">Amount Due</th>
-      <th>Status</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for doc in documents %}
-    <tr class="clickable" data-href="{{ url_for('document_view', doc_id=doc.id) }}">
-      <td onclick="event.stopPropagation()"><input type="checkbox" name="doc_ids" value="{{ doc.id }}" class="doc-checkbox" style="accent-color:var(--gold);cursor:pointer;"></td>
-      <td onclick="event.stopPropagation()">
-        <a href="{{ url_for('document_view', doc_id=doc.id) }}" class="btn btn-xs btn-outline">View</a>
-        {% if doc.is_overdue %}<a href="{{ url_for('remind_document', doc_id=doc.id) }}" class="btn btn-xs btn-warn" style="margin-left:4px;">Remind</a>{% endif %}
-      </td>
-      <td onclick="event.stopPropagation()"><a href="{{ url_for('document_pdf', doc_id=doc.id) }}?download=1" class="btn btn-xs btn-outline">PDF</a></td>
-      <td class="doc-number">{{ doc.doc_number }}</td>
-      <td><span class="badge badge-{{ doc.doc_type }}">{{ doc.doc_type }}</span></td>
-      <td>{{ doc.client_name or '—' }}</td>
-      <td>{{ doc.date_issued }}</td>
-      <td>{{ doc.currency }}</td>
-      <td>{{ doc.amount_due | format_currency }}</td>
-      <td>
-        <span class="status status-{{ doc.status }}">{{ doc.status }}</span>
-        {% if doc.is_overdue %}<span class="status status-overdue" style="margin-left:4px;">overdue</span>{% endif %}
-        {% if doc.voided %}<span class="status status-voided" style="margin-left:4px;">void</span>{% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</form>
+<div id="view-container" data-view="{{ view_pref or 'list' }}">
+
+  {# ---- List view ---- #}
+  <div class="view-list">
+    <form id="bulk-form" method="POST" action="{{ url_for('bulk_delete_documents') }}">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:36px;"><input type="checkbox" id="select-all" title="Select all" style="accent-color:var(--gold);cursor:pointer;"></th>
+          <th>Number</th>
+          <th>Type</th>
+          <th>Client</th>
+          <th>Date</th>
+          <th style="white-space:nowrap;">Currency</th>
+          <th style="white-space:nowrap;text-align:right;">Amount Due</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for doc in documents %}
+        <tr class="clickable" onclick="window.location='{{ url_for('document_view', doc_id=doc.id) }}'">
+          <td onclick="event.stopPropagation()">
+            <input type="checkbox" name="doc_ids" value="{{ doc.id }}" class="item-checkbox"
+                   style="accent-color:var(--gold);cursor:pointer;"
+                   onchange="onCheckboxChange(this, {{ doc.id }})">
+          </td>
+          <td class="doc-number strong" style="color:var(--gold);">{{ doc.doc_number }}</td>
+          <td>
+            <span class="badge badge-{{ doc.doc_type }}">
+              {% if doc.invoice_type == 'deposit' %}deposit inv
+              {% elif doc.invoice_type == 'balance' %}balance inv
+              {% else %}{{ doc.doc_type }}{% endif %}
+            </span>
+          </td>
+          <td>{{ doc.client_name or '—' }}</td>
+          <td style="color:var(--text-muted);font-size:13px;">{{ doc.date_issued }}</td>
+          <td>{{ doc.currency }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ doc.amount_due | format_currency }}</td>
+          <td style="white-space:nowrap;">
+            <span class="status status-{{ doc.status }}">{{ doc.status }}</span>
+            {% if doc.is_overdue %}<span class="status status-overdue" style="margin-left:4px;">overdue</span>{% endif %}
+            {% if doc.voided %}<span class="status status-voided" style="margin-left:4px;">void</span>{% endif %}
+          </td>
+          <td style="text-align:right;white-space:nowrap;" onclick="event.stopPropagation()">
+            {% if doc.is_overdue %}
+            <a href="{{ url_for('remind_document', doc_id=doc.id) }}" class="btn btn-xs btn-warn">Remind</a>
+            {% endif %}
+            <a href="{{ url_for('document_pdf', doc_id=doc.id) }}?download=1" class="btn btn-xs btn-outline">PDF</a>
+            <a href="{{ url_for('document_view', doc_id=doc.id) }}" class="btn btn-xs btn-outline">Open →</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </form>
+  </div>
+
+  {# ---- Grid view ---- #}
+  <div class="view-grid">
+    <div class="card-grid">
+      {% for doc in documents %}
+      <div class="card-item" data-id="{{ doc.id }}" onclick="toggleCardSelect(this, {{ doc.id }})">
+        <div class="card-check">✓</div>
+        <div class="card-name" style="color:var(--gold);">{{ doc.doc_number }}</div>
+        <div style="margin-bottom:6px;">
+          <span class="badge badge-{{ doc.doc_type }}" style="font-size:11px;">
+            {% if doc.invoice_type == 'deposit' %}deposit inv
+            {% elif doc.invoice_type == 'balance' %}balance inv
+            {% else %}{{ doc.doc_type }}{% endif %}
+          </span>
+        </div>
+        <div class="card-meta">
+          {% if doc.client_name %}<span>{{ doc.client_name }}</span>{% endif %}
+          <span>{{ doc.date_issued }}</span>
+          <span style="font-variant-numeric:tabular-nums;">{{ doc.currency }} {{ doc.amount_due | format_currency }}</span>
+        </div>
+        <div class="card-footer">
+          <div>
+            <span class="status status-{{ doc.status }}" style="font-size:11px;padding:1px 6px;">{{ doc.status }}</span>
+            {% if doc.is_overdue %}<span class="status status-overdue" style="font-size:11px;padding:1px 6px;">overdue</span>{% endif %}
+            {% if doc.voided %}<span class="status status-voided" style="font-size:11px;padding:1px 6px;">void</span>{% endif %}
+          </div>
+          <a href="{{ url_for('document_view', doc_id=doc.id) }}"
+             class="btn btn-xs btn-outline" onclick="event.stopPropagation()">Open →</a>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+</div>
 {% else %}
 <p class="empty-state">No documents match the current filters.</p>
 {% endif %}
+
+<!-- Hidden export form -->
+<form id="export-form" method="POST" action="{{ url_for('export_selection_documents') }}" style="display:none;"></form>
+
+<!-- 3-step bulk delete modal -->
+<div class="modal-overlay hidden" id="bulk-delete-modal" role="dialog" aria-modal="true">
+  <div class="modal-card" style="max-width:480px;padding:0;">
+    <div class="modal-header">
+      <h3 id="del-modal-title">Delete Documents?</h3>
+      <button type="button" class="modal-close" onclick="closeBulkDeleteModal()" aria-label="Close">&times;</button>
+    </div>
+
+    <!-- Step 1: count + list -->
+    <div id="del-step-1" style="padding:24px 28px 20px;">
+      <p id="del-step1-msg" style="margin-bottom:10px;"></p>
+      <div id="del-names-list"
+           style="max-height:160px;overflow-y:auto;margin-bottom:16px;font-size:13px;color:var(--text-muted);border:1px solid var(--border);border-radius:6px;padding:8px 12px;"></div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-outline" onclick="closeBulkDeleteModal()">Cancel</button>
+        <button type="button" class="btn btn-danger" onclick="goDelStep(2)">Continue →</button>
+      </div>
+    </div>
+
+    <!-- Step 2: warning -->
+    <div id="del-step-2" class="hidden" style="padding:24px 28px 20px;">
+      <div style="padding:14px 16px;border-radius:8px;background:rgba(220,50,50,0.1);border:1px solid rgba(220,50,50,0.25);margin-bottom:18px;">
+        <p style="font-weight:600;color:#e05;margin-bottom:6px;">This cannot be undone.</p>
+        <p id="del-step2-detail" style="font-size:13.5px;line-height:1.5;"></p>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-outline" onclick="goDelStep(1)">← Back</button>
+        <button type="button" class="btn btn-danger" onclick="goDelStep(3)">I Understand, Proceed →</button>
+      </div>
+    </div>
+
+    <!-- Step 3: type DELETE -->
+    <div id="del-step-3" class="hidden" style="padding:24px 28px 20px;">
+      <p style="margin-bottom:12px;font-size:14px;">Type <strong>DELETE</strong> to permanently remove the selected documents.</p>
+      <input type="text" id="del-confirm-input" class="form-control"
+             placeholder="Type DELETE here" oninput="updateDelConfirmBtn()"
+             autocomplete="off" spellcheck="false" />
+      <div class="form-actions" style="margin-top:16px;">
+        <button type="button" class="btn btn-outline" onclick="closeBulkDeleteModal()">Cancel</button>
+        <button type="button" id="del-confirm-btn" class="btn btn-danger"
+                onclick="executeBulkDelete()" disabled>
+          Delete <span id="del-confirm-count"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-const selectAll = document.getElementById('select-all');
-const bulkBtn = document.getElementById('bulk-delete-btn');
-const checkboxes = () => document.querySelectorAll('.doc-checkbox');
-
-function updateBulkBtn() {
-  const anyChecked = [...checkboxes()].some(c => c.checked);
-  bulkBtn.classList.toggle('hidden', !anyChecked);
-  if (selectAll) selectAll.indeterminate = anyChecked && [...checkboxes()].some(c => !c.checked);
-}
-
-if (selectAll) {
-  selectAll.addEventListener('change', () => {
-    checkboxes().forEach(c => c.checked = selectAll.checked);
-    updateBulkBtn();
+// ---- View toggle ----
+const viewContainer = document.getElementById('view-container');
+function setView(mode) {
+  if (!viewContainer) return;
+  viewContainer.dataset.view = mode;
+  document.querySelectorAll('.view-toggle-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+  fetch('/api/view_pref', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({section: 'documents', mode}),
   });
 }
 
-checkboxes().forEach(c => c.addEventListener('change', () => {
-  if (selectAll) selectAll.checked = [...checkboxes()].every(c => c.checked);
-  updateBulkBtn();
-}));
+// ---- Selection state ----
+let selectedIds = new Set();
 
-function bulkDelete() {
-  const count = [...checkboxes()].filter(c => c.checked).length;
-  if (confirm(`Delete ${count} document${count !== 1 ? 's' : ''}? This cannot be undone.`)) {
-    document.getElementById('bulk-form').submit();
+function updateSelectionUI() {
+  const count = selectedIds.size;
+  const bar = document.getElementById('selection-bar');
+  if (bar) bar.classList.toggle('hidden', count === 0);
+  const sc = document.getElementById('sel-count');
+  if (sc) sc.textContent = `${count} selected`;
+
+  document.querySelectorAll('.item-checkbox').forEach(cb => {
+    cb.checked = selectedIds.has(parseInt(cb.value));
+  });
+  document.querySelectorAll('.card-item').forEach(card => {
+    card.classList.toggle('selected', selectedIds.has(parseInt(card.dataset.id)));
+  });
+  const sa = document.getElementById('select-all');
+  if (sa) {
+    const total = document.querySelectorAll('.item-checkbox').length;
+    sa.checked = count > 0 && count === total;
+    sa.indeterminate = count > 0 && count < total;
   }
 }
+
+function toggleCardSelect(card, id) {
+  if (selectedIds.has(id)) selectedIds.delete(id);
+  else selectedIds.add(id);
+  updateSelectionUI();
+}
+
+function clearSelection() {
+  selectedIds.clear();
+  updateSelectionUI();
+}
+
+function onCheckboxChange(cb, id) {
+  if (cb.checked) selectedIds.add(id);
+  else selectedIds.delete(id);
+  updateSelectionUI();
+}
+
+const selectAll = document.getElementById('select-all');
+if (selectAll) {
+  selectAll.addEventListener('change', () => {
+    document.querySelectorAll('.item-checkbox').forEach(cb => {
+      cb.checked = selectAll.checked;
+      if (selectAll.checked) selectedIds.add(parseInt(cb.value));
+      else selectedIds.delete(parseInt(cb.value));
+    });
+    updateSelectionUI();
+  });
+}
+
+// ---- Export selected ----
+function exportSelected() {
+  if (!selectedIds.size) return;
+  const form = document.getElementById('export-form');
+  form.querySelectorAll('input[name="doc_ids"]').forEach(i => i.remove());
+  selectedIds.forEach(id => {
+    const inp = document.createElement('input');
+    inp.type = 'hidden'; inp.name = 'doc_ids'; inp.value = id;
+    form.appendChild(inp);
+  });
+  form.submit();
+}
+
+// ---- 3-step bulk delete ----
+function openBulkDeleteModal() {
+  if (!selectedIds.size) return;
+  const count = selectedIds.size;
+  const label = count === 1 ? 'Document' : 'Documents';
+  document.getElementById('del-modal-title').textContent = `Delete ${count} ${label}?`;
+  document.getElementById('del-step1-msg').textContent =
+    `You have selected ${count} ${label.toLowerCase()} to permanently delete:`;
+
+  const names = [];
+  selectedIds.forEach(id => {
+    const cb = document.querySelector(`.item-checkbox[value="${id}"]`);
+    if (cb) {
+      const strong = cb.closest('tr')?.querySelector('.strong');
+      if (strong) { names.push(strong.textContent.trim()); return; }
+    }
+    const card = document.querySelector(`.card-item[data-id="${id}"]`);
+    if (card) names.push(card.querySelector('.card-name')?.textContent.trim() || `#${id}`);
+  });
+  document.getElementById('del-names-list').innerHTML =
+    names.map(n => `<div style="padding:3px 0;">• ${n}</div>`).join('');
+
+  document.getElementById('del-step2-detail').textContent =
+    `${count} ${label.toLowerCase()} will be permanently removed from your account. ` +
+    `Any documents linked to these (such as generated invoices) will have their parent link cleared. ` +
+    `This action cannot be reversed.`;
+  document.getElementById('del-confirm-count').textContent = `${count} ${label}`;
+  document.getElementById('del-confirm-input').value = '';
+  updateDelConfirmBtn();
+  goDelStep(1);
+  document.getElementById('bulk-delete-modal').classList.remove('hidden');
+}
+
+function closeBulkDeleteModal() {
+  document.getElementById('bulk-delete-modal').classList.add('hidden');
+}
+
+function goDelStep(n) {
+  [1, 2, 3].forEach(i =>
+    document.getElementById(`del-step-${i}`).classList.toggle('hidden', i !== n)
+  );
+  if (n === 3) setTimeout(() => document.getElementById('del-confirm-input').focus(), 50);
+}
+
+function updateDelConfirmBtn() {
+  const val = (document.getElementById('del-confirm-input')?.value || '');
+  document.getElementById('del-confirm-btn').disabled = val !== 'DELETE';
+}
+
+function executeBulkDelete() {
+  const form = document.getElementById('bulk-form');
+  form.querySelectorAll('input[name="doc_ids"]').forEach(i => {
+    if (i.type === 'checkbox') i.checked = false;
+    else i.remove();
+  });
+  selectedIds.forEach(id => {
+    const inp = document.createElement('input');
+    inp.type = 'hidden'; inp.name = 'doc_ids'; inp.value = id;
+    form.appendChild(inp);
+  });
+  form.submit();
+}
+
+document.getElementById('bulk-delete-modal')?.addEventListener('click', function(e) {
+  if (e.target === this) closeBulkDeleteModal();
+});
 </script>
 {% endblock %}
