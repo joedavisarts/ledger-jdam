@@ -131,6 +131,21 @@ def init_db():
             body_template    TEXT NOT NULL,
             UNIQUE(user_id, doc_type)
         );
+
+        CREATE TABLE IF NOT EXISTS jobs (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id     TEXT NOT NULL UNIQUE,
+            user_id    INTEGER NOT NULL REFERENCES users(id),
+            job_number TEXT NOT NULL,
+            job_title  TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS job_counter (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL REFERENCES users(id) UNIQUE,
+            last_number INTEGER NOT NULL DEFAULT 1110
+        );
     """)
 
     # Safely add columns that may be missing on pre-migration installs
@@ -154,6 +169,7 @@ def init_db():
     _add_col('users', 'view_pref_clients',   "TEXT NOT NULL DEFAULT 'list'")
     _add_col('users', 'view_pref_documents', "TEXT NOT NULL DEFAULT 'list'")
     _add_col('users', 'view_pref_jobs',      "TEXT NOT NULL DEFAULT 'list'")
+    _add_col('users', 'job_prefix',          "TEXT NOT NULL DEFAULT 'JOB'")
 
     c.execute("UPDATE documents SET status='pending' WHERE status IN ('draft', 'issued')")
 

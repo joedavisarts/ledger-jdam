@@ -720,7 +720,8 @@ def new_document(doc_type):
 
         prefix = getattr(current_user, f'doc_prefix_{doc_type}')
         doc_number = next_doc_number(doc_type, current_user.id, prefix)
-        job_id = str(uuid.uuid4())
+        existing_job_id = (data.get('existing_job_id') or '').strip() or None
+        job_id = _ensure_job(db, current_user.id, existing_job_id)
 
         cur = db.execute(
             "INSERT INTO documents (doc_type,doc_number,client_id,date_issued,"
@@ -772,7 +773,8 @@ def new_document(doc_type):
     db.close()
     today = date.today().isoformat()
     return render_template('new_document.html', doc_type=doc_type,
-                           clients=clients, today=today)
+                           clients=clients, today=today,
+                           prefill_job_id=request.args.get('job_id', ''))
 
 
 # ---------------------------------------------------------------------------
@@ -1081,6 +1083,16 @@ def _doc_type_summary(type_counts):
 @app.route('/jobs')
 def jobs():
     db = get_db()
+
+    # Get job metadata from jobs table (ordered newest first)
+    job_meta_rows = _rows_to_list(db.execute(
+        "SELECT j.id, j.job_id, j.job_number, j.job_title, j.created_at"
+        " FROM jobs j WHERE j.user_id=? ORDER BY j.created_at DESC",
+        (current_user.id,),
+    ).fetchall())
+    job_meta_map = {j['job_id']: j for j in job_meta_rows}
+
+    # Get all documents grouped by job_id
     rows = _rows_to_list(db.execute(
         "SELECT d.id, d.job_id, d.doc_type, d.doc_number, d.status, d.voided,"
         " d.invoice_type, d.amount_due, d.paid_amount, d.subtotal, d.discount,"
@@ -1093,34 +1105,57 @@ def jobs():
     ).fetchall())
 
     labels = _client_display_labels(db, current_user.id)
+    user_row = db.execute(
+        "SELECT view_pref_jobs FROM users WHERE id=?", (current_user.id,)
+    ).fetchone()
+    view_pref = (user_row['view_pref_jobs'] if user_row else None) or 'list'
     db.close()
 
     jobs_map = defaultdict(list)
     for r in rows:
         jobs_map[r['job_id']].append(r)
 
+    # Build a set of all job_ids that appear in either table
+    all_job_ids = set(jobs_map.keys()) | set(job_meta_map.keys())
+
     job_list = []
-    for job_id, docs in jobs_map.items():
-        anchor = next(
-            (d for d in docs
-             if not d.get('source_document_id') and d['doc_type'] in ('quote', 'invoice')),
-            docs[0],
-        )
-        client_id = anchor.get('client_id')
-        client_name = labels.get(client_id) if client_id else '—'
+    for job_id in all_job_ids:
+        docs = jobs_map.get(job_id, [])
+        meta = job_meta_map.get(job_id)
 
-        type_counts = defaultdict(int)
-        for d in docs:
-            type_counts[d['doc_type']] += 1
+        if docs:
+            anchor = next(
+                (d for d in docs
+                 if not d.get('source_document_id') and d['doc_type'] in ('quote', 'invoice')),
+                docs[0],
+            )
+            client_id = anchor.get('client_id')
+            client_name = labels.get(client_id) if client_id else '—'
+            type_counts = defaultdict(int)
+            for d in docs:
+                type_counts[d['doc_type']] += 1
+            has_overdue = any(_is_overdue(d) for d in docs if not d.get('voided'))
+            has_voided = any(d.get('voided') for d in docs)
+            overview = _job_overview(docs, anchor)
+            latest = max(d['created_at'] for d in docs)
+        else:
+            client_id = None
+            client_name = '—'
+            type_counts = defaultdict(int)
+            has_overdue = False
+            has_voided = False
+            overview = None
+            latest = meta['created_at'] if meta else ''
 
-        has_overdue = any(_is_overdue(d) for d in docs if not d.get('voided'))
-        has_voided = any(d.get('voided') for d in docs)
-
-        overview = _job_overview(docs, anchor)
-        latest = max(d['created_at'] for d in docs)
+        job_number = meta['job_number'] if meta else job_id[:8]
+        job_title = meta['job_title'] if meta else None
+        display_name = job_title or job_number
 
         job_list.append({
             'job_id': job_id,
+            'job_number': job_number,
+            'job_title': job_title,
+            'display_name': display_name,
             'client_name': client_name,
             'client_id': client_id,
             'doc_count': len(docs),
@@ -1132,18 +1167,23 @@ def jobs():
         })
 
     job_list.sort(key=lambda j: j['latest'], reverse=True)
-    db2 = get_db()
-    user_row = db2.execute(
-        "SELECT view_pref_jobs FROM users WHERE id=?", (current_user.id,)
-    ).fetchone()
-    view_pref = (user_row['view_pref_jobs'] if user_row else None) or 'list'
-    db2.close()
     return render_template('jobs.html', jobs=job_list, view_pref=view_pref)
 
 
 @app.route('/jobs/<job_id>')
 def job_detail(job_id):
     db = get_db()
+
+    # Load job record from jobs table (may not exist for legacy jobs)
+    job_row = _row_to_dict(db.execute(
+        "SELECT * FROM jobs WHERE job_id=? AND user_id=?",
+        (job_id, current_user.id),
+    ).fetchone() or {})
+
+    job_number = job_row.get('job_number') if job_row else None
+    job_title = job_row.get('job_title') if job_row else None
+    display_name = job_title or job_number or job_id[:8]
+
     docs = _rows_to_list(db.execute(
         "SELECT d.*,"
         " COALESCE(NULLIF(c.company_name,''), c.name) AS client_name"
@@ -1152,7 +1192,9 @@ def job_detail(job_id):
         " ORDER BY d.created_at ASC",
         (job_id, current_user.id),
     ).fetchall())
-    if not docs:
+
+    # If no job record AND no documents, 404
+    if not job_row and not docs:
         db.close()
         abort(404)
 
@@ -1160,27 +1202,42 @@ def job_detail(job_id):
         d['is_overdue'] = _is_overdue(d)
         d['line_items'] = _parse_line_items(d.get('line_items', '[]'))
 
-    anchor = next(
-        (d for d in docs
-         if not d.get('source_document_id') and d['doc_type'] in ('quote', 'invoice')),
-        docs[0],
-    )
+    anchor = None
+    if docs:
+        anchor = next(
+            (d for d in docs
+             if not d.get('source_document_id') and d['doc_type'] in ('quote', 'invoice')),
+            docs[0],
+        )
 
     client = None
-    if anchor.get('client_id'):
+    if anchor and anchor.get('client_id'):
         client = _row_to_dict(db.execute(
             "SELECT * FROM clients WHERE id=? AND user_id=?",
             (anchor['client_id'], current_user.id),
         ).fetchone())
 
-    overview = _job_overview(docs, anchor)
+    overview = _job_overview(docs, anchor) if anchor else None
+
+    # Other jobs for reassignment dropdown
+    other_jobs = _rows_to_list(db.execute(
+        "SELECT job_id, job_number, job_title FROM jobs"
+        " WHERE user_id=? AND job_id!=? ORDER BY job_number",
+        (current_user.id, job_id),
+    ).fetchall())
+
     db.close()
     return render_template('job_detail.html',
                            job_id=job_id,
+                           job_meta=job_row,
+                           job_number=job_number,
+                           job_title=job_title,
+                           display_name=display_name,
                            docs=docs,
                            client=client,
                            overview=overview,
-                           anchor=anchor)
+                           anchor=anchor,
+                           other_jobs=other_jobs)
 
 
 # ---------------------------------------------------------------------------
@@ -1268,6 +1325,42 @@ def _job_overview(job_docs, anchor):
     }
 
 
+def _next_job_number(db, user_id):
+    """Increment job_counter for user and return formatted job_number."""
+    user_row = db.execute("SELECT job_prefix FROM users WHERE id=?", (user_id,)).fetchone()
+    prefix = (user_row['job_prefix'] if user_row and user_row['job_prefix'] else 'JOB')
+    db.execute(
+        "INSERT OR IGNORE INTO job_counter (user_id, last_number) VALUES (?, 1110)",
+        (user_id,),
+    )
+    db.execute(
+        "UPDATE job_counter SET last_number = last_number + 1 WHERE user_id=?",
+        (user_id,),
+    )
+    row = db.execute(
+        "SELECT last_number FROM job_counter WHERE user_id=?", (user_id,)
+    ).fetchone()
+    return f"{prefix}{row['last_number']}"
+
+
+def _ensure_job(db, user_id, existing_job_id=None):
+    """Return a valid job_id for user, creating a jobs record if needed."""
+    if existing_job_id:
+        row = db.execute(
+            "SELECT job_id FROM jobs WHERE job_id=? AND user_id=?",
+            (existing_job_id, user_id),
+        ).fetchone()
+        if row:
+            return existing_job_id
+    new_id = existing_job_id or str(uuid.uuid4())
+    job_number = _next_job_number(db, user_id)
+    db.execute(
+        "INSERT OR IGNORE INTO jobs (job_id, user_id, job_number) VALUES (?, ?, ?)",
+        (new_id, user_id, job_number),
+    )
+    return new_id
+
+
 @app.route('/documents/<int:doc_id>')
 def document_view(doc_id):
     db = get_db()
@@ -1337,6 +1430,19 @@ def document_view(doc_id):
         can_generate_full, can_generate_balance = _job_capabilities(job_docs, anchor['id'] if anchor else None)
         job_overview = _job_overview(job_docs, anchor)
 
+    job_meta = None
+    other_jobs = []
+    if doc.get('job_id'):
+        job_meta = _row_to_dict(db.execute(
+            "SELECT * FROM jobs WHERE job_id=? AND user_id=?",
+            (doc['job_id'], current_user.id),
+        ).fetchone() or {})
+        other_jobs = _rows_to_list(db.execute(
+            "SELECT job_id, job_number, job_title FROM jobs"
+            " WHERE user_id=? AND job_id!=? ORDER BY job_number",
+            (current_user.id, doc['job_id']),
+        ).fetchall())
+
     db.close()
     return render_template(
         'document_view.html',
@@ -1351,6 +1457,8 @@ def document_view(doc_id):
         is_anchor=is_anchor,
         can_generate_full=can_generate_full,
         can_generate_balance=can_generate_balance,
+        job_meta=job_meta,
+        other_jobs=other_jobs,
     )
 
 
@@ -2074,6 +2182,193 @@ def export_selection_documents():
     filename = f"quilk_documents_{date.today().isoformat()}.quilk"
     return send_file(buf, mimetype='application/json',
                      as_attachment=True, download_name=filename)
+
+
+# ---------------------------------------------------------------------------
+# Job management routes
+# ---------------------------------------------------------------------------
+
+@app.route('/jobs/new', methods=['POST'])
+@login_required
+def new_job():
+    db = get_db()
+    job_id = str(uuid.uuid4())
+    job_number = _next_job_number(db, current_user.id)
+    db.execute(
+        "INSERT INTO jobs (job_id, user_id, job_number) VALUES (?, ?, ?)",
+        (job_id, current_user.id, job_number),
+    )
+    db.commit()
+    db.close()
+    return redirect(url_for('job_detail', job_id=job_id))
+
+
+@app.route('/jobs/<job_id>/edit_title', methods=['POST'])
+@login_required
+def edit_job_title(job_id):
+    title = (request.form.get('job_title') or '').strip() or None
+    db = get_db()
+    db.execute(
+        "UPDATE jobs SET job_title=? WHERE job_id=? AND user_id=?",
+        (title, job_id, current_user.id),
+    )
+    db.commit()
+    db.close()
+    return redirect(url_for('job_detail', job_id=job_id))
+
+
+@app.route('/jobs/<job_id>/delete', methods=['POST'])
+@login_required
+def delete_job(job_id):
+    db = get_db()
+    doc_ids = [r['id'] for r in db.execute(
+        "SELECT id FROM documents WHERE job_id=? AND user_id=?",
+        (job_id, current_user.id),
+    ).fetchall()]
+    if doc_ids:
+        ph = ','.join('?' * len(doc_ids))
+        db.execute(f"DELETE FROM sent_log WHERE doc_id IN ({ph})", doc_ids)
+        db.execute(
+            f"UPDATE documents SET source_document_id=NULL "
+            f"WHERE source_document_id IN ({ph}) AND user_id=?",
+            [*doc_ids, current_user.id],
+        )
+        db.execute(
+            f"DELETE FROM documents WHERE id IN ({ph}) AND user_id=?",
+            [*doc_ids, current_user.id],
+        )
+    db.execute("DELETE FROM jobs WHERE job_id=? AND user_id=?", (job_id, current_user.id))
+    db.commit()
+    db.close()
+    flash('Job deleted.', 'success')
+    return redirect(url_for('jobs'))
+
+
+@app.route('/jobs/bulk_delete', methods=['POST'])
+@login_required
+def bulk_delete_jobs():
+    job_ids = request.form.getlist('job_ids')
+    if not job_ids:
+        return redirect(url_for('jobs'))
+    db = get_db()
+    for jid in job_ids:
+        doc_ids = [r['id'] for r in db.execute(
+            "SELECT id FROM documents WHERE job_id=? AND user_id=?",
+            (jid, current_user.id),
+        ).fetchall()]
+        if doc_ids:
+            ph = ','.join('?' * len(doc_ids))
+            db.execute(f"DELETE FROM sent_log WHERE doc_id IN ({ph})", doc_ids)
+            db.execute(
+                f"UPDATE documents SET source_document_id=NULL "
+                f"WHERE source_document_id IN ({ph}) AND user_id=?",
+                [*doc_ids, current_user.id],
+            )
+            db.execute(
+                f"DELETE FROM documents WHERE id IN ({ph}) AND user_id=?",
+                [*doc_ids, current_user.id],
+            )
+    if job_ids:
+        jph = ','.join('?' * len(job_ids))
+        db.execute(
+            f"DELETE FROM jobs WHERE job_id IN ({jph}) AND user_id=?",
+            [*job_ids, current_user.id],
+        )
+    db.commit()
+    db.close()
+    return redirect(url_for('jobs'))
+
+
+@app.route('/documents/<int:doc_id>/reassign_job', methods=['POST'])
+@login_required
+def reassign_job(doc_id):
+    target_job_id = (request.form.get('target_job_id') or '').strip()
+    if not target_job_id:
+        return redirect(url_for('document_view', doc_id=doc_id))
+    db = get_db()
+    target = db.execute(
+        "SELECT job_id FROM jobs WHERE job_id=? AND user_id=?",
+        (target_job_id, current_user.id),
+    ).fetchone()
+    if target:
+        db.execute(
+            "UPDATE documents SET job_id=? WHERE id=? AND user_id=?",
+            (target_job_id, doc_id, current_user.id),
+        )
+        db.commit()
+        flash('Document moved to new job.', 'success')
+    db.close()
+    return redirect(url_for('document_view', doc_id=doc_id))
+
+
+@app.route('/jobs/export_selection', methods=['POST'])
+@login_required
+def export_selection_jobs():
+    job_ids = request.form.getlist('job_ids')
+    if not job_ids:
+        return redirect(url_for('jobs'))
+    db = get_db()
+    jph = ','.join('?' * len(job_ids))
+    jobs_rows = _rows_to_list(db.execute(
+        f"SELECT * FROM jobs WHERE job_id IN ({jph}) AND user_id=?",
+        [*job_ids, current_user.id],
+    ).fetchall())
+    docs_rows = _rows_to_list(db.execute(
+        f"SELECT * FROM documents WHERE job_id IN ({jph}) AND user_id=?",
+        [*job_ids, current_user.id],
+    ).fetchall())
+    client_ids = list({d['client_id'] for d in docs_rows if d.get('client_id')})
+    clients_rows = []
+    if client_ids:
+        cph = ','.join('?' * len(client_ids))
+        clients_rows = _rows_to_list(db.execute(
+            f"SELECT * FROM clients WHERE id IN ({cph}) AND user_id=?",
+            [*client_ids, current_user.id],
+        ).fetchall())
+    db.close()
+    payload = {
+        'quilk_export': '1.0',
+        'exported_at': datetime.utcnow().isoformat() + 'Z',
+        'jobs': [{'job_id': j['job_id'], 'job_number': j['job_number'], 'job_title': j.get('job_title')} for j in jobs_rows],
+        'clients': clients_rows,
+        'documents': docs_rows,
+    }
+    buf = io.BytesIO(json.dumps(payload, indent=2, default=str).encode())
+    buf.seek(0)
+    filename = f"quilk_jobs_{date.today().isoformat()}.quilk"
+    return send_file(buf, mimetype='application/json', as_attachment=True, download_name=filename)
+
+
+@app.route('/jobs/export_selection_csv', methods=['POST'])
+@login_required
+def export_selection_jobs_csv():
+    job_ids = request.form.getlist('job_ids')
+    if not job_ids:
+        return redirect(url_for('jobs'))
+    db = get_db()
+    jph = ','.join('?' * len(job_ids))
+    rows = _rows_to_list(db.execute(
+        f"SELECT j.job_number, j.job_title, j.created_at,"
+        f" COUNT(d.id) as doc_count,"
+        f" COALESCE(NULLIF(c.company_name,''), c.name) AS client_name"
+        f" FROM jobs j"
+        f" LEFT JOIN documents d ON d.job_id = j.job_id"
+        f" LEFT JOIN clients c ON d.client_id = c.id"
+        f" WHERE j.job_id IN ({jph}) AND j.user_id=?"
+        f" GROUP BY j.job_id",
+        [*job_ids, current_user.id],
+    ).fetchall())
+    db.close()
+    fields = ['job_number', 'job_title', 'client_name', 'doc_count', 'created_at']
+    output = io.StringIO()
+    w = csv.DictWriter(output, fieldnames=fields, extrasaction='ignore')
+    w.writeheader()
+    for row in rows:
+        w.writerow({k: row.get(k) or '' for k in fields})
+    buf = io.BytesIO(output.getvalue().encode())
+    buf.seek(0)
+    return send_file(buf, mimetype='text/csv', as_attachment=True,
+                     download_name=f"jobs_{date.today().isoformat()}.csv")
 
 
 # ---------------------------------------------------------------------------

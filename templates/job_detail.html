@@ -1,20 +1,163 @@
 {% extends "base.html" %}
-{% block title %}Job — {{ client.company_name or client.name if client else 'Unknown Client' }} — Quilk{% endblock %}
+{% block title %}{{ display_name }} — Job — Quilk{% endblock %}
 {% block content %}
+
+{# ── Reassign modal ─────────────────────────────────────────────────────── #}
+{% if other_jobs %}
+<div class="modal-overlay hidden" id="reassign-modal">
+  <div class="modal-card" style="max-width:400px;padding:0;">
+    <div class="modal-header">
+      <h3>Move Document to Job</h3>
+      <button class="modal-close" onclick="document.getElementById('reassign-modal').classList.add('hidden')">&times;</button>
+    </div>
+    <div style="padding:24px;">
+      <form method="POST" id="reassign-form" action="">
+        <div class="form-group">
+          <label class="form-label">Select target job</label>
+          <select name="target_job_id" class="form-control" id="reassign-job-select">
+            {% for j in other_jobs %}
+            <option value="{{ j.job_id }}">{{ j.job_title or j.job_number }}{% if j.job_title %} ({{ j.job_number }}){% endif %}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
+          <button type="button" class="btn btn-outline" onclick="document.getElementById('reassign-modal').classList.add('hidden')">Cancel</button>
+          <button type="submit" class="btn btn-gold">Move Document</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ── Edit Title modal ───────────────────────────────────────────────────── #}
+<div class="modal-overlay hidden" id="edit-title-modal">
+  <div class="modal-card" style="max-width:420px;padding:0;">
+    <div class="modal-header">
+      <h3>Edit Job Title</h3>
+      <button class="modal-close" onclick="document.getElementById('edit-title-modal').classList.add('hidden')">&times;</button>
+    </div>
+    <div style="padding:24px;">
+      <form method="POST" action="{{ url_for('edit_job_title', job_id=job_id) }}">
+        <div class="form-group">
+          <label class="form-label">Job Title <span style="color:var(--text-muted);font-size:12px;">(optional — leave blank to use job number)</span></label>
+          <input type="text" name="job_title" class="form-control" id="edit-title-input"
+                 value="{{ job_title or '' }}"
+                 placeholder="e.g. Studio Recording Session, Album Mix, etc.">
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
+          <button type="button" class="btn btn-outline" onclick="document.getElementById('edit-title-modal').classList.add('hidden')">Cancel</button>
+          <button type="submit" class="btn btn-gold">Save Title</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{# ── Delete job modal ──────────────────────────────────────────────────── #}
+<div class="modal-overlay hidden" id="delete-job-modal" role="dialog" aria-modal="true">
+  <div class="modal-card" style="max-width:480px;padding:0;">
+    <div class="modal-header">
+      <h3 id="del-modal-title">Delete Job?</h3>
+      <button type="button" class="modal-close" onclick="closeDeleteJobModal()" aria-label="Close">&times;</button>
+    </div>
+
+    <!-- Step 1: consequences -->
+    <div id="del-step-1" style="padding:24px 28px 20px;">
+      <div style="padding:14px 16px;border-radius:8px;background:rgba(220,50,50,0.1);border:1px solid rgba(220,50,50,0.25);margin-bottom:18px;">
+        <p style="font-weight:600;color:#e05;margin-bottom:6px;">This cannot be undone.</p>
+        <p style="font-size:13.5px;line-height:1.5;">
+          Deleting this job will permanently remove it and all its documents:
+          {% if docs %}
+          <ul style="margin:8px 0 0 18px;padding:0;">
+            {% for d in docs %}
+            <li style="font-size:12.5px;color:var(--text-muted);">{{ d.doc_number }} ({{ d.doc_type }})</li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <span style="color:var(--text-muted);">No documents.</span>
+          {% endif %}
+        </p>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-outline" onclick="closeDeleteJobModal()">Cancel</button>
+        <button type="button" class="btn btn-outline"
+                onclick="closeDeleteJobModal(); document.getElementById('edit-title-modal').classList.remove('hidden')">
+          Edit Job Instead
+        </button>
+        <button type="button" class="btn btn-danger" onclick="goDelStep(2)">Continue →</button>
+      </div>
+    </div>
+
+    <!-- Step 2: export offer -->
+    <div id="del-step-2" class="hidden" style="padding:24px 28px 20px;">
+      <p style="margin-bottom:16px;font-size:14px;">Optionally export a backup of this job before deleting. The download opens in the background.</p>
+      <div style="display:flex;gap:10px;margin-bottom:10px;">
+        <form method="POST" action="{{ url_for('export_selection_jobs_csv') }}" target="_blank" id="single-export-csv-form" style="display:inline;">
+          <input type="hidden" name="job_ids" value="{{ job_id }}">
+          <button type="submit" class="btn btn-outline" onclick="onSingleExport()">↓ Download CSV</button>
+        </form>
+        <form method="POST" action="{{ url_for('export_selection_jobs') }}" target="_blank" id="single-export-quilk-form" style="display:inline;">
+          <input type="hidden" name="job_ids" value="{{ job_id }}">
+          <button type="submit" class="btn btn-outline" onclick="onSingleExport()">↓ Download .quilk</button>
+        </form>
+      </div>
+      <p id="del-export-done" class="hidden"
+         style="font-size:12.5px;color:var(--gold);margin-top:2px;">
+        ✓ Download started — continue when ready.
+      </p>
+      <div class="form-actions" style="margin-top:18px;">
+        <button type="button" class="btn btn-outline" onclick="goDelStep(1)">← Back</button>
+        <button type="button" id="del-skip-btn" class="btn btn-danger" onclick="goDelStep(3)">Skip →</button>
+      </div>
+    </div>
+
+    <!-- Step 3: type DELETE -->
+    <div id="del-step-3" class="hidden" style="padding:24px 28px 20px;">
+      <p style="margin-bottom:12px;font-size:14px;">Type <strong>DELETE</strong> to permanently remove this job and all its documents.</p>
+      <input type="text" id="del-confirm-input" class="form-control"
+             placeholder="Type DELETE here" oninput="updateDelConfirmBtn()"
+             autocomplete="off" spellcheck="false" />
+      <div class="form-actions" style="margin-top:16px;">
+        <button type="button" class="btn btn-outline" onclick="closeDeleteJobModal()">Cancel</button>
+        <form method="POST" action="{{ url_for('delete_job', job_id=job_id) }}" id="delete-job-form" style="display:inline;">
+          <button type="submit" id="del-confirm-btn" class="btn btn-danger" disabled>Delete Job</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── Page header ───────────────────────────────────────────────────────── #}
 <div class="page-header">
   <div>
     <a href="{{ url_for('jobs') }}" class="btn btn-xs btn-outline" style="margin-bottom:10px;">← Jobs</a>
-    <h1>{{ client.company_name or client.name if client else 'Job' }}</h1>
-    {% if client and client.company_name and client.name %}
-    <span class="page-sub">{{ client.name }}</span>
+    <h1>{{ display_name }}</h1>
+    {% if job_title and job_number %}
+    <span class="page-sub">{{ job_number }}</span>
     {% endif %}
   </div>
-  {% if client %}
   <div class="header-actions">
+    <a href="{{ url_for('new_document', doc_type='quote') }}?job_id={{ job_id }}" class="btn btn-outline">+ Quote</a>
+    <a href="{{ url_for('new_document', doc_type='invoice') }}?job_id={{ job_id }}" class="btn btn-outline">+ Invoice</a>
+    <a href="{{ url_for('new_document', doc_type='receipt') }}?job_id={{ job_id }}" class="btn btn-outline">+ Receipt</a>
+    {% if client %}
     <a href="{{ url_for('client_detail', client_id=client.id) }}" class="btn btn-outline">View Client</a>
+    {% endif %}
+    {% if job_meta %}
+    <button type="button" class="btn btn-outline" onclick="openEditTitle()">Edit Title</button>
+    <button type="button" class="btn btn-danger" onclick="openDeleteJobModal()">Delete Job</button>
+    {% endif %}
   </div>
-  {% endif %}
 </div>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for category, message in messages %}
+    <div class="flash flash-{{ category }}" style="margin-bottom:16px;">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
 
 <div class="detail-grid">
   {# Job Money Overview #}
@@ -66,7 +209,8 @@
   {% endif %}
 </div>
 
-{# Document family #}
+{# Document family or empty state #}
+{% if docs %}
 <div class="form-card full-width">
   <h2 class="card-title">Documents</h2>
   <table class="data-table">
@@ -108,13 +252,107 @@
           <span class="status status-voided" style="font-size:11.5px;padding:1px 7px;">void</span>
           {% endif %}
         </td>
-        <td style="text-align:right;">
+        <td style="text-align:right;white-space:nowrap;" onclick="event.stopPropagation()">
           <a href="{{ url_for('document_view', doc_id=d.id) }}"
-             class="btn btn-xs btn-outline" onclick="event.stopPropagation()">Open →</a>
+             class="btn btn-xs btn-outline">Open →</a>
+          {% if other_jobs %}
+          <button type="button" class="btn btn-xs btn-outline"
+                  onclick="openReassign({{ d.id }})"
+                  style="margin-left:4px;">Move →</button>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
+{% else %}
+{# Empty job — get started section #}
+<div class="form-card full-width" style="text-align:center;padding:40px 24px;">
+  <h2 class="card-title" style="margin-bottom:8px;">Get Started</h2>
+  <p style="color:var(--text-muted);font-size:14px;margin-bottom:28px;">
+    This job has no documents yet. Create your first document to get started.
+  </p>
+  <div style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;">
+    <a href="{{ url_for('new_document', doc_type='quote') }}?job_id={{ job_id }}" class="btn btn-outline" style="min-width:120px;">
+      <div style="font-size:22px;margin-bottom:4px;">📄</div>
+      Create Quote
+    </a>
+    <a href="{{ url_for('new_document', doc_type='invoice') }}?job_id={{ job_id }}" class="btn btn-outline" style="min-width:120px;">
+      <div style="font-size:22px;margin-bottom:4px;">🧾</div>
+      Create Invoice
+    </a>
+    <a href="{{ url_for('new_document', doc_type='receipt') }}?job_id={{ job_id }}" class="btn btn-outline" style="min-width:120px;">
+      <div style="font-size:22px;margin-bottom:4px;">✅</div>
+      Create Receipt
+    </a>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ---- Edit title modal ----
+function openEditTitle() {
+  document.getElementById('edit-title-modal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('edit-title-input').focus(), 50);
+}
+document.getElementById('edit-title-modal')?.addEventListener('click', function(e) {
+  if (e.target === this) this.classList.add('hidden');
+});
+
+// ---- Delete job modal ----
+let _delModalTitle = 'Delete Job?';
+
+function openDeleteJobModal() {
+  document.getElementById('del-confirm-input').value = '';
+  updateDelConfirmBtn();
+  document.getElementById('del-export-done').classList.add('hidden');
+  document.getElementById('del-skip-btn').textContent = 'Skip →';
+  goDelStep(1);
+  document.getElementById('delete-job-modal').classList.remove('hidden');
+}
+
+function closeDeleteJobModal() {
+  document.getElementById('delete-job-modal').classList.add('hidden');
+}
+
+function goDelStep(n) {
+  [1, 2, 3].forEach(i =>
+    document.getElementById(`del-step-${i}`).classList.toggle('hidden', i !== n)
+  );
+  if (n === 2) document.getElementById('del-modal-title').textContent = 'Export before deleting?';
+  else document.getElementById('del-modal-title').textContent = _delModalTitle;
+  if (n === 3) setTimeout(() => document.getElementById('del-confirm-input').focus(), 50);
+}
+
+function onSingleExport() {
+  document.getElementById('del-export-done').classList.remove('hidden');
+  document.getElementById('del-skip-btn').textContent = 'Continue →';
+}
+
+function updateDelConfirmBtn() {
+  const val = (document.getElementById('del-confirm-input')?.value || '');
+  document.getElementById('del-confirm-btn').disabled = val !== 'DELETE';
+}
+
+document.getElementById('delete-job-modal')?.addEventListener('click', function(e) {
+  if (e.target === this) closeDeleteJobModal();
+});
+
+// ---- Reassign modal ----
+function openReassign(docId) {
+  const form = document.getElementById('reassign-form');
+  if (form) {
+    form.action = '/documents/' + docId + '/reassign_job';
+  }
+  document.getElementById('reassign-modal').classList.remove('hidden');
+}
+
+document.getElementById('reassign-modal')?.addEventListener('click', function(e) {
+  if (e.target === this) this.classList.add('hidden');
+});
+</script>
 {% endblock %}

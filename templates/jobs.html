@@ -14,7 +14,19 @@
         <svg viewBox="0 0 24 24"><path d="M3 3v8h8V3H3zm6 6H5V5h4v4zm-6 4v8h8v-8H3zm6 6H5v-4h4v4zm4-16v8h8V3h-8zm6 6h-4V5h4v4zm-6 4v8h8v-8h-8zm6 6h-4v-4h4v4z"/></svg>
       </button>
     </div>
+    <form method="POST" action="{{ url_for('new_job') }}" style="display:inline;">
+      <button type="submit" class="btn btn-gold">New Job</button>
+    </form>
   </div>
+</div>
+
+<!-- Selection bar -->
+<div class="selection-bar hidden" id="selection-bar">
+  <span class="sel-count" id="sel-count">0 selected</span>
+  <button type="button" class="btn btn-xs btn-outline" onclick="clearSelection()">Clear</button>
+  <button type="button" class="btn btn-xs btn-outline" onclick="exportSelected()">Export .quilk</button>
+  <button type="button" class="btn btn-xs btn-outline" onclick="exportSelectedCSV()">Export CSV</button>
+  <button type="button" class="btn btn-xs btn-danger" onclick="openBulkDeleteModal()">Delete Selected</button>
 </div>
 
 {% if jobs %}
@@ -22,27 +34,40 @@
 
   {# ---- List view ---- #}
   <div class="view-list">
+    <form id="bulk-form" method="POST" action="{{ url_for('bulk_delete_jobs') }}">
     <table class="data-table">
       <thead>
         <tr>
+          <th style="width:36px;"><input type="checkbox" id="select-all" title="Select all" style="accent-color:var(--gold);cursor:pointer;"></th>
+          <th>Job # / Title</th>
           <th>Client</th>
           <th>Documents</th>
           <th style="text-align:right;">Project Total</th>
           <th style="text-align:right;">Billed</th>
           <th style="text-align:right;">Paid</th>
           <th style="text-align:right;">Outstanding</th>
+          <th>Flags</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
         {% for job in jobs %}
         <tr class="clickable" onclick="window.location='{{ url_for('job_detail', job_id=job.job_id) }}'">
+          <td onclick="event.stopPropagation()">
+            <input type="checkbox" name="job_ids" value="{{ job.job_id }}" class="item-checkbox"
+                   style="accent-color:var(--gold);cursor:pointer;"
+                   onchange="onCheckboxChange(this, '{{ job.job_id }}')">
+          </td>
           <td class="strong">
             <a href="{{ url_for('job_detail', job_id=job.job_id) }}"
                style="color:var(--text);text-decoration:none;">
-              {{ job.client_name or '—' }}
+              {{ job.display_name }}
             </a>
+            {% if job.job_title %}
+            <div style="font-size:11.5px;color:var(--text-muted);font-weight:400;margin-top:2px;">{{ job.job_number }}</div>
+            {% endif %}
           </td>
+          <td>{{ job.client_name or '—' }}</td>
           <td style="color:var(--text-muted);font-size:13px;">{{ job.type_summary }}</td>
           {% if job.overview %}
           <td style="text-align:right;font-variant-numeric:tabular-nums;">
@@ -68,20 +93,29 @@
             <span class="status status-voided" style="font-size:11.5px;padding:1px 7px;">void</span>
             {% endif %}
           </td>
+          <td style="text-align:right;">
+            <a href="{{ url_for('job_detail', job_id=job.job_id) }}"
+               class="btn btn-xs btn-outline" onclick="event.stopPropagation()">View →</a>
+          </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
+    </form>
   </div>
 
   {# ---- Grid view ---- #}
   <div class="view-grid">
     <div class="card-grid">
       {% for job in jobs %}
-      <a href="{{ url_for('job_detail', job_id=job.job_id) }}" style="text-decoration:none;color:inherit;">
-      <div class="card-item" style="cursor:pointer;">
-        <div class="card-name">{{ job.client_name or '—' }}</div>
+      <div class="card-item" data-id="{{ job.job_id }}" onclick="toggleCardSelect(this, '{{ job.job_id }}')">
+        <div class="card-check">✓</div>
+        <div class="card-name">{{ job.display_name }}</div>
+        {% if job.job_title %}
+        <div style="font-size:11.5px;color:var(--text-muted);margin-top:-4px;margin-bottom:4px;">{{ job.job_number }}</div>
+        {% endif %}
         <div class="card-meta">
+          <span>{{ job.client_name or '—' }}</span>
           <span>{{ job.type_summary }}</span>
           {% if job.overview %}
           <span style="font-variant-numeric:tabular-nums;">
@@ -98,14 +132,17 @@
             <span class="status status-voided" style="font-size:11px;padding:1px 6px;">void</span>
             {% endif %}
           </div>
-          {% if job.overview %}
-          <span style="font-weight:600;font-variant-numeric:tabular-nums;font-size:13px;">
-            {{ job.overview.currency }} {{ job.overview.balance_outstanding | format_currency }} due
-          </span>
-          {% endif %}
+          <div style="display:flex;gap:8px;align-items:center;">
+            {% if job.overview %}
+            <span style="font-weight:600;font-variant-numeric:tabular-nums;font-size:13px;">
+              {{ job.overview.currency }} {{ job.overview.balance_outstanding | format_currency }} due
+            </span>
+            {% endif %}
+            <a href="{{ url_for('job_detail', job_id=job.job_id) }}"
+               class="btn btn-xs btn-outline" onclick="event.stopPropagation()">View →</a>
+          </div>
         </div>
       </div>
-      </a>
       {% endfor %}
     </div>
   </div>
@@ -115,14 +152,77 @@
 <div class="empty-state">
   <p>No jobs yet.</p>
   <p style="font-size:14px;color:var(--text-dim);margin-top:8px;">
-    Jobs are created automatically when you create a quote or invoice.
+    Create a new job above, or jobs are created automatically when you create a quote or invoice.
   </p>
 </div>
 {% endif %}
+
+<!-- Hidden export forms (selection bar) -->
+<form id="export-form" method="POST" action="{{ url_for('export_selection_jobs') }}" style="display:none;"></form>
+<form id="export-csv-form" method="POST" action="{{ url_for('export_selection_jobs_csv') }}" style="display:none;"></form>
+<!-- Hidden export forms (modal) -->
+<form id="modal-export-csv-form"   method="POST" action="{{ url_for('export_selection_jobs_csv') }}" target="_blank" style="display:none;"></form>
+<form id="modal-export-quilk-form" method="POST" action="{{ url_for('export_selection_jobs') }}"     target="_blank" style="display:none;"></form>
+
+<!-- 3-step bulk delete modal -->
+<div class="modal-overlay hidden" id="bulk-delete-modal" role="dialog" aria-modal="true">
+  <div class="modal-card" style="max-width:480px;padding:0;">
+    <div class="modal-header">
+      <h3 id="del-modal-title">Delete Jobs?</h3>
+      <button type="button" class="modal-close" onclick="closeBulkDeleteModal()" aria-label="Close">&times;</button>
+    </div>
+
+    <!-- Step 1: consequences -->
+    <div id="del-step-1" style="padding:24px 28px 20px;">
+      <div style="padding:14px 16px;border-radius:8px;background:rgba(220,50,50,0.1);border:1px solid rgba(220,50,50,0.25);margin-bottom:18px;">
+        <p style="font-weight:600;color:#e05;margin-bottom:6px;">This cannot be undone.</p>
+        <p id="del-step1-detail" style="font-size:13.5px;line-height:1.5;"></p>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-outline" onclick="closeBulkDeleteModal()">Cancel</button>
+        <button type="button" class="btn btn-danger" onclick="goDelStep(2)">Continue →</button>
+      </div>
+    </div>
+
+    <!-- Step 2: export offer -->
+    <div id="del-step-2" class="hidden" style="padding:24px 28px 20px;">
+      <p id="del-step2-msg" style="margin-bottom:16px;font-size:14px;"></p>
+      <div style="display:flex;gap:10px;margin-bottom:10px;">
+        <button type="button" class="btn btn-outline" onclick="modalExportCSV()">↓ Download CSV</button>
+        <button type="button" class="btn btn-outline" onclick="modalExportQuilk()">↓ Download .quilk</button>
+      </div>
+      <p id="del-export-done" class="hidden"
+         style="font-size:12.5px;color:var(--gold);margin-top:2px;">
+        ✓ Download started — continue when ready.
+      </p>
+      <div class="form-actions" style="margin-top:18px;">
+        <button type="button" class="btn btn-outline" onclick="goDelStep(1)">← Back</button>
+        <button type="button" id="del-skip-btn" class="btn btn-danger" onclick="goDelStep(3)">Skip →</button>
+      </div>
+    </div>
+
+    <!-- Step 3: type DELETE -->
+    <div id="del-step-3" class="hidden" style="padding:24px 28px 20px;">
+      <p style="margin-bottom:12px;font-size:14px;">Type <strong>DELETE</strong> to permanently remove the selected jobs and all their documents.</p>
+      <input type="text" id="del-confirm-input" class="form-control"
+             placeholder="Type DELETE here" oninput="updateDelConfirmBtn()"
+             autocomplete="off" spellcheck="false" />
+      <div class="form-actions" style="margin-top:16px;">
+        <button type="button" class="btn btn-outline" onclick="closeBulkDeleteModal()">Cancel</button>
+        <button type="button" id="del-confirm-btn" class="btn btn-danger"
+                onclick="executeBulkDelete()" disabled>
+          Delete <span id="del-confirm-count"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
 <script>
+// ---- View toggle ----
 const viewContainer = document.getElementById('view-container');
 function setView(mode) {
   if (!viewContainer) return;
@@ -136,5 +236,162 @@ function setView(mode) {
     body: JSON.stringify({section: 'jobs', mode}),
   });
 }
+
+// ---- Selection state (job_ids are strings/UUIDs) ----
+let selectedIds = new Set();
+
+function updateSelectionUI() {
+  const count = selectedIds.size;
+  const bar = document.getElementById('selection-bar');
+  if (bar) bar.classList.toggle('hidden', count === 0);
+  const sc = document.getElementById('sel-count');
+  if (sc) sc.textContent = `${count} selected`;
+
+  // Sync list checkboxes
+  document.querySelectorAll('.item-checkbox').forEach(cb => {
+    cb.checked = selectedIds.has(cb.value);
+  });
+  // Sync cards
+  document.querySelectorAll('.card-item').forEach(card => {
+    card.classList.toggle('selected', selectedIds.has(card.dataset.id));
+  });
+  // Select-all state
+  const sa = document.getElementById('select-all');
+  if (sa) {
+    const total = document.querySelectorAll('.item-checkbox').length;
+    sa.checked = count > 0 && count === total;
+    sa.indeterminate = count > 0 && count < total;
+  }
+}
+
+function toggleCardSelect(card, id) {
+  if (selectedIds.has(id)) selectedIds.delete(id);
+  else selectedIds.add(id);
+  updateSelectionUI();
+}
+
+function clearSelection() {
+  selectedIds.clear();
+  updateSelectionUI();
+}
+
+function onCheckboxChange(cb, id) {
+  if (cb.checked) selectedIds.add(id);
+  else selectedIds.delete(id);
+  updateSelectionUI();
+}
+
+const selectAll = document.getElementById('select-all');
+if (selectAll) {
+  selectAll.addEventListener('change', () => {
+    document.querySelectorAll('.item-checkbox').forEach(cb => {
+      cb.checked = selectAll.checked;
+      if (selectAll.checked) selectedIds.add(cb.value);
+      else selectedIds.delete(cb.value);
+    });
+    updateSelectionUI();
+  });
+}
+
+// ---- Export selected ----
+function _injectIds(form, fieldName) {
+  form.querySelectorAll(`input[name="${fieldName}"]`).forEach(i => i.remove());
+  selectedIds.forEach(id => {
+    const inp = document.createElement('input');
+    inp.type = 'hidden'; inp.name = fieldName; inp.value = id;
+    form.appendChild(inp);
+  });
+}
+
+function exportSelected() {
+  if (!selectedIds.size) return;
+  _injectIds(document.getElementById('export-form'), 'job_ids');
+  document.getElementById('export-form').submit();
+}
+
+function exportSelectedCSV() {
+  if (!selectedIds.size) return;
+  _injectIds(document.getElementById('export-csv-form'), 'job_ids');
+  document.getElementById('export-csv-form').submit();
+}
+
+// ---- 3-step bulk delete ----
+let _delModalTitle = '';
+
+function openBulkDeleteModal() {
+  if (!selectedIds.size) return;
+  const count = selectedIds.size;
+  const label = count === 1 ? 'Job' : 'Jobs';
+  _delModalTitle = `Delete ${count} ${label}?`;
+  document.getElementById('del-modal-title').textContent = _delModalTitle;
+
+  document.getElementById('del-step1-detail').textContent =
+    `${count} ${label.toLowerCase()} and all their documents will be permanently removed. ` +
+    `This action cannot be reversed.`;
+
+  document.getElementById('del-step2-msg').textContent =
+    `Optionally export a backup of ${count > 1 ? 'these ' + count + ' jobs' : 'this job'} ` +
+    `before deleting. Downloads open in the background — continue when ready.`;
+
+  document.getElementById('del-confirm-count').textContent = `${count} ${label}`;
+  document.getElementById('del-confirm-input').value = '';
+  updateDelConfirmBtn();
+
+  document.getElementById('del-export-done').classList.add('hidden');
+  document.getElementById('del-skip-btn').textContent = 'Skip →';
+
+  goDelStep(1);
+  document.getElementById('bulk-delete-modal').classList.remove('hidden');
+}
+
+function closeBulkDeleteModal() {
+  document.getElementById('bulk-delete-modal').classList.add('hidden');
+}
+
+function goDelStep(n) {
+  [1, 2, 3].forEach(i =>
+    document.getElementById(`del-step-${i}`).classList.toggle('hidden', i !== n)
+  );
+  if (n === 2) document.getElementById('del-modal-title').textContent = 'Export before deleting?';
+  else document.getElementById('del-modal-title').textContent = _delModalTitle;
+  if (n === 3) setTimeout(() => document.getElementById('del-confirm-input').focus(), 50);
+}
+
+function modalExportCSV() {
+  _injectIds(document.getElementById('modal-export-csv-form'), 'job_ids');
+  document.getElementById('modal-export-csv-form').submit();
+  document.getElementById('del-export-done').classList.remove('hidden');
+  document.getElementById('del-skip-btn').textContent = 'Continue →';
+}
+
+function modalExportQuilk() {
+  _injectIds(document.getElementById('modal-export-quilk-form'), 'job_ids');
+  document.getElementById('modal-export-quilk-form').submit();
+  document.getElementById('del-export-done').classList.remove('hidden');
+  document.getElementById('del-skip-btn').textContent = 'Continue →';
+}
+
+function updateDelConfirmBtn() {
+  const val = (document.getElementById('del-confirm-input')?.value || '');
+  document.getElementById('del-confirm-btn').disabled = val !== 'DELETE';
+}
+
+function executeBulkDelete() {
+  const form = document.getElementById('bulk-form');
+  form.querySelectorAll('input[name="job_ids"]').forEach(i => {
+    if (i.type === 'checkbox') i.checked = false;
+    else i.remove();
+  });
+  selectedIds.forEach(id => {
+    const inp = document.createElement('input');
+    inp.type = 'hidden'; inp.name = 'job_ids'; inp.value = id;
+    form.appendChild(inp);
+  });
+  form.submit();
+}
+
+document.getElementById('bulk-delete-modal')?.addEventListener('click', function(e) {
+  if (e.target === this) closeBulkDeleteModal();
+});
 </script>
 {% endblock %}

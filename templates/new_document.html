@@ -8,6 +8,9 @@
 
 <form id="doc-form" method="POST" action="{{ url_for('new_document', doc_type=doc_type) }}">
   <input type="hidden" name="line_items_json" id="line_items_json" value="[]" />
+  {% if prefill_job_id %}
+  <input type="hidden" name="existing_job_id" value="{{ prefill_job_id }}">
+  {% endif %}
 
   <div class="form-grid">
 

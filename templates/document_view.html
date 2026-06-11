@@ -74,6 +74,34 @@
   </div>
 </div>
 
+{# ── Reassign modal ─────────────────────────────────────────────────────── #}
+{% if doc.job_id and other_jobs %}
+<div class="modal-overlay hidden" id="reassign-modal">
+  <div class="modal-card" style="max-width:400px;padding:0;">
+    <div class="modal-header">
+      <h3>Move to Job</h3>
+      <button class="modal-close" onclick="document.getElementById('reassign-modal').classList.add('hidden')">&times;</button>
+    </div>
+    <div style="padding:24px;">
+      <form method="POST" action="{{ url_for('reassign_job', doc_id=doc.id) }}">
+        <div class="form-group">
+          <label class="form-label">Select target job</label>
+          <select name="target_job_id" class="form-control">
+            {% for j in other_jobs %}
+            <option value="{{ j.job_id }}">{{ j.job_title or j.job_number }}{% if j.job_title %} ({{ j.job_number }}){% endif %}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
+          <button type="button" class="btn btn-outline" onclick="document.getElementById('reassign-modal').classList.add('hidden')">Cancel</button>
+          <button type="submit" class="btn btn-gold">Move Document</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {# ── Page header ───────────────────────────────────────────────────────── #}
 <div class="page-header">
   <div>
@@ -173,6 +201,10 @@
           onsubmit="return confirm('Delete this document? This cannot be undone.')">
       <button type="submit" class="btn btn-danger">Delete</button>
     </form>
+
+    {% if doc.job_id and other_jobs %}
+    <button type="button" class="btn btn-outline" onclick="document.getElementById('reassign-modal').classList.remove('hidden')">Move to Job</button>
+    {% endif %}
   </div>
 </div>
 
@@ -253,7 +285,18 @@
 {# ── Job Family + Money Overview ───────────────────────────────────────── #}
 {% if job_family and job_family|length > 1 %}
 <div class="form-card full-width">
-  <h2 class="card-title">Job Family</h2>
+  <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
+    <h2 class="card-title" style="margin:0;">Job</h2>
+    {% if job_meta %}
+    <a href="{{ url_for('job_detail', job_id=doc.job_id) }}"
+       style="color:var(--gold);text-decoration:none;font-size:14px;font-weight:600;">
+       {{ job_meta.job_title or job_meta.job_number }}
+    </a>
+    {% if job_meta.job_title %}
+    <span style="color:var(--text-muted);font-size:12px;">{{ job_meta.job_number }}</span>
+    {% endif %}
+    {% endif %}
+  </div>
   <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:20px;">
     {% for jd in job_family %}
     <div style="display:flex;align-items:center;gap:8px;font-size:14px;
@@ -381,7 +424,7 @@ function updateDepositHint() {
 updateDepositHint();
 
 // Close modals on overlay click
-['deposit-modal','void-modal'].forEach(function(id) {
+['deposit-modal','void-modal','reassign-modal'].forEach(function(id) {
   var el = document.getElementById(id);
   if (el) el.addEventListener('click', function(e) {
     if (e.target === el) el.classList.add('hidden');
