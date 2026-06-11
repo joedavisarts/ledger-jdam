@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Jobs — Quilk{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Jobs</h1>
+</div>
+
+{% if jobs %}
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Client</th>
+      <th>Documents</th>
+      <th style="text-align:right;">Project Total</th>
+      <th style="text-align:right;">Billed</th>
+      <th style="text-align:right;">Paid</th>
+      <th style="text-align:right;">Outstanding</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for job in jobs %}
+    <tr class="clickable" onclick="window.location='{{ url_for('job_detail', job_id=job.job_id) }}'">
+      <td class="strong">
+        <a href="{{ url_for('job_detail', job_id=job.job_id) }}"
+           style="color:var(--text);text-decoration:none;">
+          {{ job.client_name or '—' }}
+        </a>
+      </td>
+      <td style="color:var(--text-muted);font-size:13px;">{{ job.type_summary }}</td>
+      {% if job.overview %}
+      <td style="text-align:right;font-variant-numeric:tabular-nums;">
+        {{ job.overview.currency }} {{ job.overview.project_total | format_currency }}
+      </td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--text-muted);">
+        {{ job.overview.currency }} {{ job.overview.amount_billed | format_currency }}
+      </td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--text-muted);">
+        {{ job.overview.currency }} {{ job.overview.amount_paid | format_currency }}
+      </td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600;">
+        {{ job.overview.currency }} {{ job.overview.balance_outstanding | format_currency }}
+      </td>
+      {% else %}
+      <td colspan="4" style="color:var(--text-dim);font-size:13px;">—</td>
+      {% endif %}
+      <td style="white-space:nowrap;">
+        {% if job.has_overdue %}
+        <span class="status status-overdue" style="font-size:11.5px;padding:1px 7px;">overdue</span>
+        {% endif %}
+        {% if job.has_voided %}
+        <span class="status status-voided" style="font-size:11.5px;padding:1px 7px;">void</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+  <p>No jobs yet.</p>
+  <p style="font-size:14px;color:var(--text-dim);margin-top:8px;">
+    Jobs are created automatically when you create a quote or invoice.
+  </p>
+</div>
+{% endif %}
+{% endblock %}

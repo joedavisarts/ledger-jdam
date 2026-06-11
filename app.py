@@ -1062,6 +1062,118 @@ def export_client(client_id):
 
 
 # ---------------------------------------------------------------------------
+# Jobs
+# ---------------------------------------------------------------------------
+
+def _doc_type_summary(type_counts):
+    parts = []
+    for dt in ('quote', 'invoice', 'receipt'):
+        n = type_counts.get(dt, 0)
+        if n:
+            parts.append(f"{n} {dt if n == 1 else dt + 's'}")
+    return ' · '.join(parts) if parts else '—'
+
+
+@app.route('/jobs')
+def jobs():
+    db = get_db()
+    rows = _rows_to_list(db.execute(
+        "SELECT d.id, d.job_id, d.doc_type, d.doc_number, d.status, d.voided,"
+        " d.invoice_type, d.amount_due, d.paid_amount, d.subtotal, d.discount,"
+        " d.tax_amount, d.source_document_id, d.created_at, d.pay_by_date,"
+        " d.client_id, d.currency"
+        " FROM documents d"
+        " WHERE d.user_id=? AND d.job_id IS NOT NULL"
+        " ORDER BY d.created_at ASC",
+        (current_user.id,),
+    ).fetchall())
+
+    labels = _client_display_labels(db, current_user.id)
+    db.close()
+
+    jobs_map = defaultdict(list)
+    for r in rows:
+        jobs_map[r['job_id']].append(r)
+
+    job_list = []
+    for job_id, docs in jobs_map.items():
+        anchor = next(
+            (d for d in docs
+             if not d.get('source_document_id') and d['doc_type'] in ('quote', 'invoice')),
+            docs[0],
+        )
+        client_id = anchor.get('client_id')
+        client_name = labels.get(client_id) if client_id else '—'
+
+        type_counts = defaultdict(int)
+        for d in docs:
+            type_counts[d['doc_type']] += 1
+
+        has_overdue = any(_is_overdue(d) for d in docs if not d.get('voided'))
+        has_voided = any(d.get('voided') for d in docs)
+
+        overview = _job_overview(docs, anchor)
+        latest = max(d['created_at'] for d in docs)
+
+        job_list.append({
+            'job_id': job_id,
+            'client_name': client_name,
+            'client_id': client_id,
+            'doc_count': len(docs),
+            'type_summary': _doc_type_summary(dict(type_counts)),
+            'has_overdue': has_overdue,
+            'has_voided': has_voided,
+            'overview': overview,
+            'latest': latest,
+        })
+
+    job_list.sort(key=lambda j: j['latest'], reverse=True)
+    return render_template('jobs.html', jobs=job_list)
+
+
+@app.route('/jobs/<job_id>')
+def job_detail(job_id):
+    db = get_db()
+    docs = _rows_to_list(db.execute(
+        "SELECT d.*,"
+        " COALESCE(NULLIF(c.company_name,''), c.name) AS client_name"
+        " FROM documents d LEFT JOIN clients c ON d.client_id=c.id"
+        " WHERE d.job_id=? AND d.user_id=?"
+        " ORDER BY d.created_at ASC",
+        (job_id, current_user.id),
+    ).fetchall())
+    if not docs:
+        db.close()
+        abort(404)
+
+    for d in docs:
+        d['is_overdue'] = _is_overdue(d)
+        d['line_items'] = _parse_line_items(d.get('line_items', '[]'))
+
+    anchor = next(
+        (d for d in docs
+         if not d.get('source_document_id') and d['doc_type'] in ('quote', 'invoice')),
+        docs[0],
+    )
+
+    client = None
+    if anchor.get('client_id'):
+        client = _row_to_dict(db.execute(
+            "SELECT * FROM clients WHERE id=? AND user_id=?",
+            (anchor['client_id'], current_user.id),
+        ).fetchone())
+
+    overview = _job_overview(docs, anchor)
+    db.close()
+    return render_template('job_detail.html',
+                           job_id=job_id,
+                           docs=docs,
+                           client=client,
+                           overview=overview,
+                           anchor=anchor)
+
+
+# ---------------------------------------------------------------------------
 # Documents
 # ---------------------------------------------------------------------------
 

@@ -52,6 +52,10 @@
           <svg viewBox="0 0 24 24"><path d="M20 6h-2.18c.07-.44.18-.88.18-1.36C18 2.98 16.02 1 13.64 1c-1.28 0-2.43.54-3.27 1.39L9 3.77l-1.37-1.38C6.79 1.54 5.64 1 4.36 1 1.98 1 0 2.98 0 5.36c0 .48.1.92.18 1.36H2C.9 6.73 0 7.63 0 8.73v11C0 20.83.9 21.73 2 21.73h18c1.1 0 2-.9 2-2V8.73c0-1.1-.9-2-2-2z"/></svg>
           <span class="nav-label">Documents</span>
         </a>
+        <a href="{{ url_for('jobs') }}" class="nav-item {% if request.endpoint in ('jobs','job_detail') %}active{% endif %}">
+          <svg viewBox="0 0 24 24"><path d="M20 7H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V9c0-1.1-.9-2-2-2zm0 12H4V9h16v10zM15 3H9c-1.1 0-2 .9-2 2v2h2V5h6v2h2V5c0-1.1-.9-2-2-2z"/></svg>
+          <span class="nav-label">Jobs</span>
+        </a>
       </nav>
       <div class="sidebar-bottom">
         <form method="POST" action="{{ url_for('logout') }}">

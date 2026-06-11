@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Job — {{ client.company_name or client.name if client else 'Unknown Client' }} — Quilk{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <a href="{{ url_for('jobs') }}" class="btn btn-xs btn-outline" style="margin-bottom:10px;">← Jobs</a>
+    <h1>{{ client.company_name or client.name if client else 'Job' }}</h1>
+    {% if client and client.company_name and client.name %}
+    <span class="page-sub">{{ client.name }}</span>
+    {% endif %}
+  </div>
+  {% if client %}
+  <div class="header-actions">
+    <a href="{{ url_for('client_detail', client_id=client.id) }}" class="btn btn-outline">View Client</a>
+  </div>
+  {% endif %}
+</div>
+
+<div class="detail-grid">
+  {# Job Money Overview #}
+  {% if overview %}
+  <div class="form-card">
+    <h2 class="card-title">Money Overview</h2>
+    <div class="totals-summary">
+      <div class="total-row">
+        <span>Project Total</span>
+        <span>{{ overview.currency }} {{ overview.project_total | format_currency }}</span>
+      </div>
+      <div class="total-row">
+        <span>Amount Billed</span>
+        <span>{{ overview.currency }} {{ overview.amount_billed | format_currency }}</span>
+      </div>
+      <div class="total-row">
+        <span>Amount Paid</span>
+        <span>{{ overview.currency }} {{ overview.amount_paid | format_currency }}</span>
+      </div>
+      <div class="total-row total-due">
+        <span>Balance Outstanding</span>
+        <span>{{ overview.currency }} {{ overview.balance_outstanding | format_currency }}</span>
+      </div>
+    </div>
+    {% if overview.voided_received %}
+    <p style="font-size:12.5px;color:var(--text-muted);margin-top:10px;">
+      Voided: {{ overview.currency }} {{ overview.voided_received | format_currency }}
+      received on voided document(s) — not included above.
+    </p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {# Client info card #}
+  {% if client %}
+  <div class="form-card">
+    <h2 class="card-title">Client</h2>
+    <dl class="detail-list">
+      {% if client.company_name %}<dt>Company</dt><dd>{{ client.company_name }}</dd>{% endif %}
+      {% if client.name %}<dt>Contact</dt><dd>{{ client.name }}</dd>{% endif %}
+      {% if client.email %}<dt>Email</dt><dd>{{ client.email }}</dd>{% endif %}
+      {% if client.phone %}<dt>Phone</dt><dd>{{ client.phone }}</dd>{% endif %}
+    </dl>
+    <div style="margin-top:14px;">
+      <a href="{{ url_for('client_detail', client_id=client.id) }}"
+         class="btn btn-xs btn-outline">Client Profile →</a>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{# Document family #}
+<div class="form-card full-width">
+  <h2 class="card-title">Documents</h2>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Number</th>
+        <th>Type</th>
+        <th>Date</th>
+        <th style="text-align:right;">Amount Due</th>
+        <th>Status</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in docs %}
+      <tr class="clickable" onclick="window.location='{{ url_for('document_view', doc_id=d.id) }}'">
+        <td class="strong">
+          <a href="{{ url_for('document_view', doc_id=d.id) }}"
+             style="color:var(--gold);text-decoration:none;">{{ d.doc_number }}</a>
+        </td>
+        <td>
+          <span class="badge badge-{{ d.doc_type }}">
+            {% if d.invoice_type == 'deposit' %}deposit inv
+            {% elif d.invoice_type == 'balance' %}balance inv
+            {% elif d.invoice_type == 'full' %}full inv
+            {% else %}{{ d.doc_type }}{% endif %}
+          </span>
+        </td>
+        <td style="color:var(--text-muted);font-size:13px;">{{ d.date_issued }}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums;">
+          {{ d.currency }} {{ d.amount_due | format_currency }}
+        </td>
+        <td style="white-space:nowrap;">
+          <span class="status status-{{ d.status }}" style="font-size:11.5px;padding:1px 7px;">{{ d.status }}</span>
+          {% if d.is_overdue %}
+          <span class="status status-overdue" style="font-size:11.5px;padding:1px 7px;">overdue</span>
+          {% endif %}
+          {% if d.voided %}
+          <span class="status status-voided" style="font-size:11.5px;padding:1px 7px;">void</span>
+          {% endif %}
+        </td>
+        <td style="text-align:right;">
+          <a href="{{ url_for('document_view', doc_id=d.id) }}"
+             class="btn btn-xs btn-outline" onclick="event.stopPropagation()">Open →</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
