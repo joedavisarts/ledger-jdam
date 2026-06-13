@@ -25,7 +25,7 @@ body {
   color: var(--text);
   font-size: 18.2px;
   line-height: 1.5;
-  zoom: 1.15;
+  zoom: 1.15;  /* mobile baseline — overridden to 0.8 on desktop below */
 }
 a { color: var(--gold); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -35,6 +35,12 @@ a:hover { text-decoration: underline; }
   display: flex;
   height: calc(100vh / 1.15);
   overflow: hidden;
+}
+
+/* ===== DESKTOP 80% SCALE ===== */
+@media (min-width: 768px) {
+  body { zoom: 0.8; }
+  .app-shell { height: calc(100vh / 0.8); }
 }
 
 /* ===== SIDEBAR ===== */
@@ -1531,3 +1537,43 @@ body[data-theme="light"] .form-control { border-color: #cccccc; }
 body[data-theme="light"] .card-item { background: #fff; }
 body[data-theme="light"] .card-item.selected { background: rgba(218,179,34,0.08); }
 body[data-theme="light"] .selection-bar { background: #f5f5f5; }
+
+/* ===== MOBILE: DETAIL GRID STACKS VERTICALLY ===== */
+@media (max-width: 767px) {
+  .detail-grid { grid-template-columns: 1fr; }
+}
+
+/* ===== JOB DETAIL: DOCUMENT LIST ===== */
+.job-doc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.job-doc-item {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.job-doc-item:last-child { border-bottom: none; }
+.job-doc-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.job-doc-num {
+  font-family: monospace;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--gold);
+  text-decoration: none;
+}
+.job-doc-num:hover { text-decoration: underline; }
+.job-doc-bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.job-doc-date { color: var(--text-muted); }
+.job-doc-amount { font-variant-numeric: tabular-nums; color: var(--text); }

@@ -41,9 +41,7 @@
           <th style="width:36px;"><input type="checkbox" id="select-all" title="Select all"></th>
           <th>Job # / Title</th>
           <th>Client</th>
-          <th>Documents</th>
           <th style="text-align:right;">Project Total</th>
-          <th style="text-align:right;">Billed</th>
           <th style="text-align:right;">Paid</th>
           <th style="text-align:right;">Outstanding</th>
           <th>Flags</th>
@@ -67,13 +65,9 @@
             {% endif %}
           </td>
           <td>{{ job.client_name or '—' }}</td>
-          <td style="color:var(--text-muted);font-size:13px;">{{ job.type_summary }}</td>
           {% if job.overview %}
           <td style="text-align:right;font-variant-numeric:tabular-nums;">
             {{ job.overview.currency }} {{ job.overview.project_total | format_currency }}
-          </td>
-          <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--text-muted);">
-            {{ job.overview.currency }} {{ job.overview.amount_billed | format_currency }}
           </td>
           <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--text-muted);">
             {{ job.overview.currency }} {{ job.overview.amount_paid | format_currency }}
@@ -82,7 +76,7 @@
             {{ job.overview.currency }} {{ job.overview.balance_outstanding | format_currency }}
           </td>
           {% else %}
-          <td colspan="4" style="color:var(--text-dim);font-size:13px;">—</td>
+          <td colspan="3" style="color:var(--text-dim);font-size:13px;">—</td>
           {% endif %}
           <td style="white-space:nowrap;">
             {% if job.has_overdue %}

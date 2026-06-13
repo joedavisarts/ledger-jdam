@@ -213,58 +213,37 @@
 {% if docs %}
 <div class="form-card full-width">
   <h2 class="card-title">Documents</h2>
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>Number</th>
-        <th>Type</th>
-        <th>Date</th>
-        <th style="text-align:right;">Amount Due</th>
-        <th>Status</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for d in docs %}
-      <tr class="clickable" onclick="window.location='{{ url_for('document_view', doc_id=d.id) }}'">
-        <td class="strong">
-          <a href="{{ url_for('document_view', doc_id=d.id) }}"
-             style="color:var(--gold);text-decoration:none;">{{ d.doc_number }}</a>
-        </td>
-        <td>
-          <span class="badge badge-{{ d.doc_type }}">
-            {% if d.invoice_type == 'deposit' %}deposit inv
-            {% elif d.invoice_type == 'balance' %}balance inv
-            {% elif d.invoice_type == 'full' %}full inv
-            {% else %}{{ d.doc_type }}{% endif %}
-          </span>
-        </td>
-        <td style="color:var(--text-muted);font-size:13px;">{{ d.date_issued }}</td>
-        <td style="text-align:right;font-variant-numeric:tabular-nums;">
-          {{ d.currency }} {{ d.amount_due | format_currency }}
-        </td>
-        <td style="white-space:nowrap;">
-          <span class="status status-{{ d.status }}" style="font-size:11.5px;padding:1px 7px;">{{ d.status }}</span>
-          {% if d.is_overdue %}
-          <span class="status status-overdue" style="font-size:11.5px;padding:1px 7px;">overdue</span>
-          {% endif %}
-          {% if d.voided %}
-          <span class="status status-voided" style="font-size:11.5px;padding:1px 7px;">void</span>
-          {% endif %}
-        </td>
-        <td style="text-align:right;white-space:nowrap;" onclick="event.stopPropagation()">
-          <a href="{{ url_for('document_view', doc_id=d.id) }}"
-             class="btn btn-xs btn-outline">Open →</a>
-          {% if other_jobs %}
-          <button type="button" class="btn btn-xs btn-outline"
-                  onclick="openReassign({{ d.id }})"
-                  style="margin-left:4px;">Move →</button>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <ul class="job-doc-list">
+    {% for d in docs %}
+    <li class="job-doc-item">
+      <div class="job-doc-top">
+        <a href="{{ url_for('document_view', doc_id=d.id) }}" class="job-doc-num">{{ d.doc_number }}</a>
+        <span class="badge badge-{{ d.doc_type }}">
+          {% if d.invoice_type == 'deposit' %}deposit inv
+          {% elif d.invoice_type == 'balance' %}balance inv
+          {% elif d.invoice_type == 'full' %}full inv
+          {% else %}{{ d.doc_type }}{% endif %}
+        </span>
+      </div>
+      <div class="job-doc-bottom">
+        <span class="job-doc-date">{{ d.date_issued }}</span>
+        <span class="job-doc-amount">{{ d.currency }} {{ d.amount_due | format_currency }}</span>
+        <span class="status status-{{ d.status }}" style="font-size:11.5px;padding:1px 7px;">{{ d.status }}</span>
+        {% if d.is_overdue %}
+        <span class="status status-overdue" style="font-size:11.5px;padding:1px 7px;">overdue</span>
+        {% endif %}
+        {% if d.voided %}
+        <span class="status status-voided" style="font-size:11.5px;padding:1px 7px;">void</span>
+        {% endif %}
+        <a href="{{ url_for('document_view', doc_id=d.id) }}" class="btn btn-xs btn-outline">Open →</a>
+        {% if other_jobs %}
+        <button type="button" class="btn btn-xs btn-outline"
+                onclick="openReassign({{ d.id }})">Move →</button>
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
 </div>
 {% else %}
 {# Empty job — get started section #}
