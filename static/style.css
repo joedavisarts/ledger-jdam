@@ -380,6 +380,43 @@ a:hover { text-decoration: underline; }
   color: var(--text-muted);
 }
 
+/* ===== CUSTOM CHECKBOXES ===== */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  vertical-align: middle;
+  flex-shrink: 0;
+  transition: border-color 0.15s, background 0.15s;
+}
+input[type="checkbox"]:hover { border-color: var(--gold); }
+input[type="checkbox"]:checked {
+  background: var(--gold);
+  border-color: var(--gold);
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 12 12' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2 6l3 3 5-5' stroke='%23fff' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-size: 10px 10px;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+/* Indeterminate state (select-all partial) */
+input[type="checkbox"]:indeterminate {
+  border-color: var(--gold);
+  background: transparent;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 12 12' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2.5 6h7' stroke='%239046d6' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-size: 10px 10px;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
 /* Void banner */
 .void-banner {
   background: rgba(150,150,150,0.1);
@@ -863,10 +900,8 @@ a:hover { text-decoration: underline; }
 }
 .modal-items-table td:first-child { color: var(--text); }
 .modal-items-table input[type="checkbox"] {
-  accent-color: var(--gold);
   width: 14px;
   height: 14px;
-  cursor: pointer;
 }
 
 .modal-import-actions {

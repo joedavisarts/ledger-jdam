@@ -2,6 +2,33 @@
 {% block title %}{{ doc.doc_number }} — Quilk{% endblock %}
 {% block content %}
 
+{# ── Due-date modal (Full / Balance invoices) ─────────────────────────── #}
+<div class="modal-overlay hidden" id="due-date-modal">
+  <div class="modal-card" style="width:380px;max-width:95vw;">
+    <div class="modal-header">
+      <h3 id="due-date-modal-title">Invoice Due Date</h3>
+      <button class="modal-close" onclick="document.getElementById('due-date-modal').classList.add('hidden')">&times;</button>
+    </div>
+    <div style="padding:24px;">
+      <div class="form-group">
+        <label class="form-label">Payment Due Date</label>
+        <input type="date" id="due-date-input" class="form-control">
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+        <button type="button" class="btn btn-outline"
+                onclick="document.getElementById('due-date-modal').classList.add('hidden')">Cancel</button>
+        <button type="button" class="btn btn-gold" onclick="submitWithDueDate()">Create Invoice</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Hidden form used by Full / Balance invoice flows #}
+<form id="gen-invoice-form" method="POST" action="{{ url_for('generate_invoice', doc_id=doc.id) }}" style="display:none">
+  <input type="hidden" id="gen-invoice-type" name="invoice_type" value="full">
+  <input type="hidden" id="gen-invoice-due-date" name="pay_by_date" value="">
+</form>
+
 {# ── Deposit-invoice modal ─────────────────────────────────────────────── #}
 <div class="modal-overlay hidden" id="deposit-modal">
   <div class="modal-card" style="width:420px;max-width:95vw;">
@@ -24,6 +51,10 @@
           <input type="number" name="deposit_val" id="deposit-val" class="form-control"
                  step="0.01" min="0.01" required placeholder="e.g. 50">
           <p id="deposit-hint" style="font-size:12.5px;color:var(--text-muted);margin-top:6px;"></p>
+        </div>
+        <div class="form-group" style="margin-top:14px;">
+          <label class="form-label">Payment Due Date</label>
+          <input type="date" name="pay_by_date" id="deposit-due-date" class="form-control">
         </div>
         <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
           <button type="button" class="btn btn-outline"
@@ -152,10 +183,10 @@
       <div class="gen-invoice-menu hidden" id="gen-inv-menu">
         {# Full Invoice #}
         {% if can_generate_full %}
-        <form method="POST" action="{{ url_for('generate_invoice', doc_id=doc.id) }}">
-          <input type="hidden" name="invoice_type" value="full">
-          <button type="submit" class="gen-inv-item">Full Invoice</button>
-        </form>
+        <button type="button" class="gen-inv-item"
+                onclick="document.getElementById('gen-inv-menu').classList.add('hidden');openDueDateModal('full','Full Invoice')">
+          Full Invoice
+        </button>
         {% else %}
         <span class="gen-inv-item gen-inv-disabled" title="Locked — a deposit invoice has been paid">
           Full Invoice <span class="gen-inv-lock">●</span>
@@ -170,10 +201,10 @@
 
         {# Balance Invoice #}
         {% if can_generate_balance %}
-        <form method="POST" action="{{ url_for('generate_invoice', doc_id=doc.id) }}">
-          <input type="hidden" name="invoice_type" value="balance">
-          <button type="submit" class="gen-inv-item">Balance Invoice</button>
-        </form>
+        <button type="button" class="gen-inv-item"
+                onclick="document.getElementById('gen-inv-menu').classList.add('hidden');openDueDateModal('balance','Balance Invoice')">
+          Balance Invoice
+        </button>
         {% else %}
         <span class="gen-inv-item gen-inv-disabled" title="Requires a paid deposit invoice first">
           Balance Invoice <span class="gen-inv-lock">○</span>
@@ -423,8 +454,20 @@ function updateDepositHint() {
 }
 updateDepositHint();
 
+// Due-date modal for Full / Balance invoices
+function openDueDateModal(type, title) {
+  document.getElementById('gen-invoice-type').value = type;
+  document.getElementById('due-date-modal-title').textContent = title + ' — Due Date';
+  document.getElementById('due-date-modal').classList.remove('hidden');
+}
+function submitWithDueDate() {
+  document.getElementById('gen-invoice-due-date').value = document.getElementById('due-date-input').value;
+  document.getElementById('due-date-modal').classList.add('hidden');
+  document.getElementById('gen-invoice-form').submit();
+}
+
 // Close modals on overlay click
-['deposit-modal','void-modal','reassign-modal'].forEach(function(id) {
+['due-date-modal','deposit-modal','void-modal','reassign-modal'].forEach(function(id) {
   var el = document.getElementById(id);
   if (el) el.addEventListener('click', function(e) {
     if (e.target === el) el.classList.add('hidden');

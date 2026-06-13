@@ -51,7 +51,7 @@
     <table class="data-table">
       <thead>
         <tr>
-          <th style="width:36px;"><input type="checkbox" id="select-all" title="Select all" style="accent-color:var(--gold);cursor:pointer;"></th>
+          <th style="width:36px;"><input type="checkbox" id="select-all" title="Select all"></th>
           <th>Number</th>
           <th>Type</th>
           <th>Client</th>
@@ -67,7 +67,6 @@
         <tr class="clickable" onclick="window.location='{{ url_for('document_view', doc_id=doc.id) }}'">
           <td onclick="event.stopPropagation()">
             <input type="checkbox" name="doc_ids" value="{{ doc.id }}" class="item-checkbox"
-                   style="accent-color:var(--gold);cursor:pointer;"
                    onchange="onCheckboxChange(this, {{ doc.id }})">
           </td>
           <td class="doc-number strong" style="color:var(--gold);">{{ doc.doc_number }}</td>

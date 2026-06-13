@@ -38,7 +38,7 @@
     <table class="data-table">
       <thead>
         <tr>
-          <th style="width:36px;"><input type="checkbox" id="select-all" title="Select all" style="accent-color:var(--gold);cursor:pointer;"></th>
+          <th style="width:36px;"><input type="checkbox" id="select-all" title="Select all"></th>
           <th>Job # / Title</th>
           <th>Client</th>
           <th>Documents</th>
@@ -55,7 +55,6 @@
         <tr class="clickable" onclick="window.location='{{ url_for('job_detail', job_id=job.job_id) }}'">
           <td onclick="event.stopPropagation()">
             <input type="checkbox" name="job_ids" value="{{ job.job_id }}" class="item-checkbox"
-                   style="accent-color:var(--gold);cursor:pointer;"
                    onchange="onCheckboxChange(this, '{{ job.job_id }}')">
           </td>
           <td class="strong">

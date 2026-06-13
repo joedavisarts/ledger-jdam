@@ -1587,19 +1587,21 @@ def generate_invoice(doc_id):
         already_invoiced = sum(d['amount_due'] or 0 for d in paid_deposits)
         amount_due = project_total - already_invoiced
 
+    pay_by_date = request.form.get('pay_by_date') or None
+
     doc_number = next_doc_number('invoice', current_user.id, current_user.doc_prefix_invoice)
     cur = db.execute(
         "INSERT INTO documents (doc_type, doc_number, client_id, date_issued, currency,"
         " line_items, subtotal, discount, tax_amount, paid_amount, amount_due, status,"
         " notes, source_document_id, user_id, job_id, invoice_type,"
-        " deposit_amount, deposit_type)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " deposit_amount, deposit_type, pay_by_date)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         ('invoice', doc_number, anchor['client_id'], date.today().isoformat(),
          anchor['currency'], anchor['line_items'], anchor['subtotal'],
          anchor['discount'], anchor['tax_amount'], 0,
          amount_due, 'pending', anchor['notes'],
          doc_id, current_user.id, job_id, invoice_type,
-         deposit_amount_stored, deposit_type_stored),
+         deposit_amount_stored, deposit_type_stored, pay_by_date),
     )
     invoice_id = cur.lastrowid
     db.commit()
